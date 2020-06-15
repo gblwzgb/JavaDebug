@@ -802,10 +802,11 @@ public class ScheduledThreadPoolExecutor
     }
 
     /**
-     * Specialized delay queue. To mesh with TPE declarations, this
+     * Specialized delay queue. To mesh with TPE（ThreadPoolExecutor） declarations, this
      * class must be declared as a BlockingQueue<Runnable> even though
      * it can only hold RunnableScheduledFutures.
      */
+    // 延迟队列，代码上基本就是（DelayQueue + PriorityQueue）的拷贝
     static class DelayedWorkQueue extends AbstractQueue<Runnable>
         implements BlockingQueue<Runnable> {
 

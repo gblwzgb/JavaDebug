@@ -85,7 +85,11 @@ import java.util.concurrent.atomic.AtomicInteger;
  * @see     Object#wait(long)
  * @since   1.3
  */
-
+// 所有的构造方法，都会启动一个timer线程
+// 和ScheduledThreadPoolExecutor一样，使用二叉堆来管理任务的优先级，所以任务调度的复杂度是O(log n)，n是任务数
+// 由于是单线程执行的任务，所以不能搞一些执行时间很长的任务，会影响到其他任务的调度执行（调度时间不准确了）。
+// 1. task的异常没有捕获，一个任务抛了异常且调用方没有自行捕获的话，会导致整个Timer就挂了。
+// 2. 两种rate的区别？
 public class Timer {
     /**
      * The timer task queue.  This data structure is shared with the timer
@@ -93,13 +97,14 @@ public class Timer {
      * and the timer thread consumes, executing timer tasks as appropriate,
      * and removing them from the queue when they're obsolete.
      */
+    // 任务队列，和执行线程共享。
+    // Timer对象是生产者，提供了各种各样的调度方法给用户，执行线程是消费者。
     private final TaskQueue queue = new TaskQueue();
-
     /**
      * The timer thread.
      */
+    // 执行线程，把任务队列的引用传进去了
     private final TimerThread thread = new TimerThread(queue);
-
     /**
      * This object causes the timer's task execution thread to exit
      * gracefully when there are no live references to the Timer object and no
@@ -107,6 +112,7 @@ public class Timer {
      * Timer as such a finalizer would be susceptible to a subclass's
      * finalizer forgetting to call it.
      */
+    // todo
     private final Object threadReaper = new Object() {
         protected void finalize() throws Throwable {
             synchronized(queue) {
@@ -119,6 +125,7 @@ public class Timer {
     /**
      * This ID is used to generate thread names.
      */
+    // 单例的，多个Timer对象之间共享，用于生成执行线程的名称。
     private final static AtomicInteger nextSerialNumber = new AtomicInteger(0);
     private static int serialNumber() {
         return nextSerialNumber.getAndIncrement();
@@ -128,6 +135,7 @@ public class Timer {
      * Creates a new timer.  The associated thread does <i>not</i>
      * {@linkplain Thread#setDaemon run as a daemon}.
      */
+    // 非守护线程
     public Timer() {
         this("Timer-" + serialNumber());
     }
@@ -155,6 +163,7 @@ public class Timer {
      * @throws NullPointerException if {@code name} is null
      * @since 1.5
      */
+    // 非守护线程，线程直接在构造方法里启动了。
     public Timer(String name) {
         thread.setName(name);
         thread.start();
@@ -170,6 +179,7 @@ public class Timer {
      * @throws NullPointerException if {@code name} is null
      * @since 1.5
      */
+    // 守护线程
     public Timer(String name, boolean isDaemon) {
         thread.setName(name);
         thread.setDaemon(isDaemon);
@@ -187,6 +197,7 @@ public class Timer {
      *         cancelled, timer was cancelled, or timer thread terminated.
      * @throws NullPointerException if {@code task} is null
      */
+    // 在xxx毫秒后执行该task，一次性的任务（第三个参数0）
     public void schedule(TimerTask task, long delay) {
         if (delay < 0)
             throw new IllegalArgumentException("Negative delay.");
@@ -204,6 +215,7 @@ public class Timer {
      *         cancelled, timer was cancelled, or timer thread terminated.
      * @throws NullPointerException if {@code task} or {@code time} is null
      */
+    // 在指定时间执行该task，一次性的任务（第三个参数0）
     public void schedule(TimerTask task, Date time) {
         sched(task, time.getTime(), 0);
     }
@@ -391,7 +403,7 @@ public class Timer {
         // overflow while still being effectively infinitely large.
         if (Math.abs(period) > (Long.MAX_VALUE >> 1))
             period >>= 1;
-
+        // 加锁，此时不能消费
         synchronized(queue) {
             if (!thread.newTasksMayBeScheduled)
                 throw new IllegalStateException("Timer already cancelled.");
@@ -522,35 +534,54 @@ class TimerThread extends Thread {
                 boolean taskFired;
                 synchronized(queue) {
                     // Wait for queue to become non-empty
+                    // 如果队列是空的，且队列的状态是【还可以新增任务】，则wait并释放锁
                     while (queue.isEmpty() && newTasksMayBeScheduled)
                         queue.wait();
+                    // 如果被notify以后，队列还是空的，则跳出死循环
                     if (queue.isEmpty())
                         break; // Queue is empty and will forever remain; die
                     // Queue nonempty; look at first evt and do the right thing
                     long currentTime, executionTime;
+                    // 获取队列中的，任务队列下标为1的task
                     task = queue.getMin();
+                    // 锁住这个task
                     synchronized(task.lock) {
+                        // 确认task的状态是否【已取消】
                         if (task.state == TimerTask.CANCELLED) {
+                            // 是已取消，移出该task，重排序
                             queue.removeMin();
+                            // 重新loop
                             continue;  // No action required, poll queue again
                         }
                         currentTime = System.currentTimeMillis();
                         executionTime = task.nextExecutionTime;
                         if (taskFired = (executionTime<=currentTime)) {
+
+                            // 到了执行时间了
+
                             if (task.period == 0) { // Non-repeating, remove
+                                // 如果是一次性的task，则先将该task移出队列，重排序
                                 queue.removeMin();
+                                // 将该task的状态改为【已执行】（看注释其实也可以是执行中）
                                 task.state = TimerTask.EXECUTED;
                             } else { // Repeating task, reschedule
+                                // 重复的任务，给任务队列下标为1的task，设置一个新的执行时间
+                                // 设置完成后，做重排序。
                                 queue.rescheduleMin(
-                                  task.period<0 ? currentTime   - task.period :
-                                          executionTime + task.period);
+                                        task.period<0 ? currentTime   - task.period
+                                                : executionTime + task.period);
                             }
                         }
                     }
                     if (!taskFired) // Task hasn't yet fired; wait
+                        // 未到执行时间，则wait到最近要执行的task的时间为止，超时后重新loop一次。
+                        // PS：当然在wait的时候，也可能会插进来一个比当前task执行时间小的，
+                        //     但不会唤醒当前线程，否则就会有问题，因为当前task已经被移出队列了，而且又没到执行时间。
                         queue.wait(executionTime - currentTime);
                 }
+                // task到执行时间了
                 if (taskFired)  // Task fired; run it, holding no locks
+                    // 执行任务
                     task.run();
             } catch(InterruptedException e) {
             }
@@ -580,6 +611,7 @@ class TaskQueue {
      * The number of tasks in the priority queue.  (The tasks are stored in
      * queue[1] up to queue[size]).
      */
+    // 当前队列中的task数量
     private int size = 0;
 
     /**
@@ -594,21 +626,24 @@ class TaskQueue {
      */
     void add(TimerTask task) {
         // Grow backing store if necessary
+        // 第一次扩容：数组里已经有127个task的时候，再添加一个task时，会触发2倍扩容
+        // 因为放不下了，queue[0]是没有放任何task的，就是空置出来的。
         if (size + 1 == queue.length)
             queue = Arrays.copyOf(queue, 2*queue.length);
-
+        // 第一个task，直接放到queue[1]的格子里了。
         queue[++size] = task;
+        // 向上重排序
         fixUp(size);
     }
-
     /**
      * Return the "head task" of the priority queue.  (The head task is an
      * task with the lowest nextExecutionTime.)
      */
     TimerTask getMin() {
+        // 获取最新要执行的task，该task保存在queue[1]中。
+        // 每次有变动，都会重排序，把最新要执行的task，替换到queue[1]中。
         return queue[1];
     }
-
     /**
      * Return the ith task in the priority queue, where i ranges from 1 (the
      * head task, which is returned by getMin) to the number of tasks on the
@@ -617,16 +652,19 @@ class TaskQueue {
     TimerTask get(int i) {
         return queue[i];
     }
-
     /**
      * Remove the head task from the priority queue.
      */
     void removeMin() {
+        // 删除queue[1]，然后把队列最后一个格子替换上来。
         queue[1] = queue[size];
+        // 两个事情
+        // 1、将队列最后一个格子，设置为null
+        // 2、将队列的task计数-1
         queue[size--] = null;  // Drop extra reference to prevent memory leak
+        // 因为把最后一个格子替换上来了，所以这里要向下重排序。
         fixDown(1);
     }
-
     /**
      * Removes the ith element from queue without regard for maintaining
      * the heap invariant.  Recall that queue is one-based, so
@@ -634,11 +672,9 @@ class TaskQueue {
      */
     void quickRemove(int i) {
         assert i <= size;
-
         queue[i] = queue[size];
         queue[size--] = null;  // Drop extra ref to prevent memory leak
     }
-
     /**
      * Sets the nextExecutionTime associated with the head task to the
      * specified value, and adjusts priority queue accordingly.
@@ -647,14 +683,12 @@ class TaskQueue {
         queue[1].nextExecutionTime = newTime;
         fixDown(1);
     }
-
     /**
      * Returns true if the priority queue contains no elements.
      */
     boolean isEmpty() {
         return size==0;
     }
-
     /**
      * Removes all elements from the priority queue.
      */
@@ -662,10 +696,8 @@ class TaskQueue {
         // Null out task references to prevent memory leak
         for (int i=1; i<=size; i++)
             queue[i] = null;
-
         size = 0;
     }
-
     /**
      * Establishes the heap invariant (described above) assuming the heap
      * satisfies the invariant except possibly for the leaf-node indexed by k
@@ -684,7 +716,6 @@ class TaskQueue {
             k = j;
         }
     }
-
     /**
      * Establishes the heap invariant (described above) in the subtree
      * rooted at k, which is assumed to satisfy the heap invariant except
@@ -699,7 +730,7 @@ class TaskQueue {
         int j;
         while ((j = k << 1) <= size && j > 0) {
             if (j < size &&
-                queue[j].nextExecutionTime > queue[j+1].nextExecutionTime)
+                    queue[j].nextExecutionTime > queue[j+1].nextExecutionTime)
                 j++; // j indexes smallest kid
             if (queue[k].nextExecutionTime <= queue[j].nextExecutionTime)
                 break;
@@ -707,7 +738,6 @@ class TaskQueue {
             k = j;
         }
     }
-
     /**
      * Establishes the heap invariant (described above) in the entire tree,
      * assuming nothing about the order of the elements prior to the call.
