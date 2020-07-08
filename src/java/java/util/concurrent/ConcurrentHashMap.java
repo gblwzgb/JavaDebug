@@ -2448,14 +2448,16 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
         int nextn = nextTab.length;
         // 使用ForwardingNode节点，代表这个槽已经被转移过了
         ForwardingNode<K,V> fwd = new ForwardingNode<K,V>(nextTab);
-        boolean advance = true;
+        boolean advance = true;  // 代表继续竞争号段
         boolean finishing = false; // to ensure sweep before committing nextTab
         for (int i = 0, bound = 0;;) {
             Node<K,V> f; int fh;
-            while (advance) {
+            while (advance) {  // 继续抢号段
                 int nextIndex, nextBound;
                 if (--i >= bound || finishing)
-                    advance = false;  // 当前线程负责的转移范围已经转移完
+                    // 1、--i >= bound：说明已经有抢到的号段，还没有转移完，继续转移
+                    // 2、扩容结束，退出抢号段的行列
+                    advance = false;
                 else if ((nextIndex = transferIndex) <= 0) {
                     i = -1;  // 下一个要转移范围的index节点已经小于0了，说明转移完了
                     advance = false;
@@ -2501,7 +2503,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
                     if (tabAt(tab, i) == f) {
                         Node<K,V> ln, hn;
                         if (fh >= 0) {
-                            int runBit = fh & n;  // 这里是0或非0（取模用n-1，这里用n）
+                            int runBit = fh & n;  // 这里是0或非0（取模用n-1，这里用n，原数组的大小）
                             Node<K,V> lastRun = f;
                             /**
                              * 假设链表为：正(1)->0->正(2)->正(3)，那这里的运算结果
@@ -2577,10 +2579,10 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
                                 }
                             }
                             /**
-                             * 如果低位的链表长度小于等于6,则解除树化。TODO：untreeify
+                             * 如果低位的链表长度小于等于6,则解除树化。
                              * 如果大于6，看看高位长度是不是0，是0则说明原链表没拆。
                              * 没拆就用原来的，拆了就新构造一个树形结构
-                             * (new TreeBin的时候会进行树化。TODO：new TreeBin)
+                             * (new TreeBin的时候会进行树化。)
                              */
                             ln = (lc <= UNTREEIFY_THRESHOLD) ? untreeify(lo) :
                                 (hc != 0) ? new TreeBin<K,V>(lo) : t;

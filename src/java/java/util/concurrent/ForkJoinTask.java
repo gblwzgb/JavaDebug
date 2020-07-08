@@ -131,7 +131,7 @@ import java.lang.reflect.Constructor;
  * (fork) and return (join) from a parallel recursive function. As is
  * the case with other forms of recursive calls, returns (joins)
  * should be performed innermost-first. For example, {@code a.fork();
- * b.fork(); b.join(); a.join();} is likely to be substantially more
+ * b.fork(); b.join(); a.join();} is likely to be substantially more               这里重要！
  * efficient than joining {@code a} before {@code b}.
  *
  * <p>The execution status of tasks may be queried at several levels
@@ -304,12 +304,18 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
      */
     final void internalWait(long timeout) {
         int s;
+        // >=0代表没有完成，在status中设置一个需要SIGNAL的信号
         if ((s = status) >= 0 && // force completer to issue notify
             U.compareAndSwapInt(this, STATUS, s, s | SIGNAL)) {
             synchronized (this) {
                 if (status >= 0)
-                    try { wait(timeout); } catch (InterruptedException ie) { }
+                    // 双检锁，wait让出锁
+                    try { wait(timeout);
+                    }  catch (InterruptedException ie) {
+                        // 忽略中断
+                    }
                 else
+                    // status<0，代表完成了，通知所有wait在该task上的线程
                     notifyAll();
             }
         }
@@ -389,6 +395,26 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
             tryUnpush(this) && (s = doExec()) < 0 ? s :
             wt.pool.awaitJoin(w, this, 0L) :
             externalAwaitDone();
+
+        /** 上面的看起来不清晰，按下面这样写一下 **/
+/*      if ((s = status) < 0) {
+            return s;  // status<0，代表normal，直接返回
+        }
+
+        // 如果是FJP中的Worker线程调用的join方法
+        if (((t = Thread.currentThread()) instanceof ForkJoinWorkerThread)) {
+            // 1、先尝试将当前task，从WorkerQueue中pop出来（如果不在top位，就会失败，也有可能CAS导致失败）
+            // 2、执行当前task，成功执行，s为normal（负数）
+            if ((w = (wt = (ForkJoinWorkerThread)t).workQueue).tryUnpush(this) && (s = doExec()) < 0) {
+                return s;
+            } else {
+                // tryUnpush失败，或者tryUnpush成功，但doExec失败，则到这里
+                return wt.pool.awaitJoin(w, this, 0L);
+            }
+        }
+
+        // 外部线程调用的join方法
+        return externalAwaitDone();*/
     }
 
     /**
@@ -403,6 +429,17 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
             (wt = (ForkJoinWorkerThread)t).pool.
             awaitJoin(wt.workQueue, this, 0L) :
             externalAwaitDone();
+
+        /** 上面的看起来不清晰，按下面这样写一下 **/
+/*if    ((s = doExec()) < 0) {
+            return s;
+        }
+
+        if (((t = Thread.currentThread()) instanceof ForkJoinWorkerThread)) {
+            return (wt = (ForkJoinWorkerThread)t).pool.awaitJoin(wt.workQueue, this, 0L);
+        }
+
+        return externalAwaitDone();*/
     }
 
     // Exception table support
@@ -697,6 +734,7 @@ public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
     public final ForkJoinTask<V> fork() {
         Thread t;
         if ((t = Thread.currentThread()) instanceof ForkJoinWorkerThread)
+            // 如果当前线程是FJP中的Worker线程，则push到该线程对应的WorkerQueue中（top）
             ((ForkJoinWorkerThread)t).workQueue.push(this);
         else
             ForkJoinPool.common.externalPush(this);

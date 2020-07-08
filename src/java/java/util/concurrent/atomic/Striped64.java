@@ -44,6 +44,7 @@ import java.util.concurrent.ThreadLocalRandom;
  * extends Number so that concrete subclasses must publicly do so.
  */
 @SuppressWarnings("serial")
+// @Contended解决伪共享：https://www.cnblogs.com/tong-yuan/p/FalseSharing.html
 abstract class Striped64 extends Number {
     /*
      * This class maintains a lazily-initialized table of atomically
@@ -211,6 +212,7 @@ abstract class Striped64 extends Number {
      * avoids the need for an extra field or function in LongAdder).
      * @param wasUncontended false if CAS failed before call
      */
+    // cas创建Cell数组，cas创建槽位元素，cas加锁扩容，cas在Cell上累加。
     final void longAccumulate(long x, LongBinaryOperator fn,
                               boolean wasUncontended) {
         int h;
@@ -219,17 +221,25 @@ abstract class Striped64 extends Number {
             h = getProbe();
             wasUncontended = true;
         }
+        // 碰撞
         boolean collide = false;                // True if last slot nonempty
         for (;;) {
             Cell[] as; Cell a; int n; long v;
+            /**
+             * 如果cells数组初始化好了，且长度>0
+             */
             if ((as = cells) != null && (n = as.length) > 0) {
                 if ((a = as[(n - 1) & h]) == null) {
+                    // 如果非繁忙
                     if (cellsBusy == 0) {       // Try to attach new Cell
+                        // 乐观地创建了一个Cell
                         Cell r = new Cell(x);   // Optimistically create
+                        // cas锁住cellsBusy
                         if (cellsBusy == 0 && casCellsBusy()) {
                             boolean created = false;
                             try {               // Recheck under lock
                                 Cell[] rs; int m, j;
+                                // 获得锁后，再次确认一下，槽位有没有别其他线程先new好了
                                 if ((rs = cells) != null &&
                                     (m = rs.length) > 0 &&
                                     rs[j = (m - 1) & h] == null) {
@@ -249,13 +259,13 @@ abstract class Striped64 extends Number {
                 else if (!wasUncontended)       // CAS already known to fail
                     wasUncontended = true;      // Continue after rehash
                 else if (a.cas(v = a.value, ((fn == null) ? v + x :
-                                             fn.applyAsLong(v, x))))
+                                             fn.applyAsLong(v, x))))  // cas在这个非null的槽位上累加，成功跳出，失败重试
                     break;
                 else if (n >= NCPU || cells != as)
                     collide = false;            // At max size or stale
                 else if (!collide)
                     collide = true;
-                else if (cellsBusy == 0 && casCellsBusy()) {
+                else if (cellsBusy == 0 && casCellsBusy()) {  // 这里做扩容操作
                     try {
                         if (cells == as) {      // Expand table unless stale
                             Cell[] rs = new Cell[n << 1];
@@ -269,14 +279,18 @@ abstract class Striped64 extends Number {
                     collide = false;
                     continue;                   // Retry with expanded table
                 }
+                // 重新计算一个随机值
                 h = advanceProbe(h);
             }
+            /**
+             * 初始化数组，cas获取锁成功后执行
+             */
             else if (cellsBusy == 0 && cells == as && casCellsBusy()) {
                 boolean init = false;
                 try {                           // Initialize table
-                    if (cells == as) {
-                        Cell[] rs = new Cell[2];
-                        rs[h & 1] = new Cell(x);
+                    if (cells == as) {  // 再次确认数组有没有被变更过
+                        Cell[] rs = new Cell[2];  // 创建长度为2的Cell数组
+                        rs[h & 1] = new Cell(x);  // new并放置到具体的Cell中
                         cells = rs;
                         init = true;
                     }
@@ -284,6 +298,7 @@ abstract class Striped64 extends Number {
                     cellsBusy = 0;
                 }
                 if (init)
+                    // init成功，跳出循环
                     break;
             }
             else if (casBase(v = base, ((fn == null) ? v + x :

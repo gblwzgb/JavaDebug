@@ -166,6 +166,15 @@ import java.security.Permissions;
  * @since 1.7
  * @author Doug Lea
  */
+// ForkJoinPool 中的任务分为两种：一种是本地提交的任务（Submission task，如 execute、submit 提交的任务）；
+// 另外一种是 fork 出的子任务（Worker task）。两种任务都会存放在 WorkQueue 数组中，但是这两种任务并不会混合在同一个队列里，
+// ForkJoinPool 内部使用了一种随机哈希算法（有点类似 ConcurrentHashMap 的桶随机算法）将工作队列与对应的工作线程关联起来，
+// Submission 任务存放在 WorkQueue 数组的偶数索引位置，Worker 任务存放在奇数索引位。实质上，Submission 与 Worker 一样，
+// 只不过他它们被限制只能执行它们提交的本地任务，在后面的源码解析中，我们统一称之为“Worker”。
+    // 窃取FIFO（base），执行本地任务LIFO（top）
+// 参考链接1：https://www.jianshu.com/p/6a14d0b54b8d
+// 参考链接2：https://blog.csdn.net/u010841296/article/details/83963637
+
 @sun.misc.Contended
 public class ForkJoinPool extends AbstractExecutorService {
 
@@ -532,10 +541,10 @@ public class ForkJoinPool extends AbstractExecutorService {
      * an unblocked task and its continuation to progress.  Instead we
      * combine two tactics:
      *
-     *   Helping: Arranging for the joiner to execute some task that it
+     *   Helping: Arranging for the joiner to execute some task that it    帮助策略：
      *      would be running if the steal had not occurred.
      *
-     *   Compensating: Unless there are already enough live threads,
+     *   Compensating: Unless there are already enough live threads,       补偿策略：
      *      method tryCompensate() may create or re-activate a spare
      *      thread to compensate for blocked joiners until they unblock.
      *
@@ -746,13 +755,18 @@ public class ForkJoinPool extends AbstractExecutorService {
         public final boolean exec() { return true; }
     }
 
-    // Constants shared across ForkJoinPool and WorkQueue
+    // Constants shared across ForkJoinPool and WorkQueue （在ForkJoinPool和WorkQueue之间共享的常量）
 
     // Bounds
+    // |-- 16个0 --|-- 16个1 --|
     static final int SMASK        = 0xffff;        // short bits == max index
+    // 最大的工作线程数，因为这个是用16个bit存的，所以不能太大。
+    // 这个转成二进制是15个1
     static final int MAX_CAP      = 0x7fff;        // max #workers - 1
     static final int EVENMASK     = 0xfffe;        // even short bits
-    static final int SQMASK       = 0x007e;        // max 64 (even) slots
+    // 1111110，submission queue的简写，通过这个掩码，可以找到WorkerQueue[]的偶数位子，因为最后一位是0。
+    // 如：ws[m & r & SQMASK]，这个SQMASK，10进制是126，最多表示64个偶数格子。
+    static final int SQMASK       = 0x007e;        // max 64 (even) slots （最多64个偶数槽）
 
     // Masks and units for WorkQueue.scanState and ctl sp subfield
     static final int SCANNING     = 1;             // false when running tasks
@@ -798,16 +812,23 @@ public class ForkJoinPool extends AbstractExecutorService {
         static final int MAXIMUM_QUEUE_CAPACITY = 1 << 26; // 64M
 
         // Instance fields
+        // <0代表非活跃的，奇数代表正在扫描，>=0的偶数代表正忙
         volatile int scanState;    // versioned, <0: inactive; odd:scanning
         int stackPred;             // pool stack (ctl) predecessor
         int nsteals;               // number of steals
         int hint;                  // randomization and stealer index hint
+        // 前16位记录了mode，后16位记录在WorkQueue数组中的下标
         int config;                // pool index and mode
+        // WorkQueue的锁，1代表锁上了，0代表没锁上，负数代表中断了
         volatile int qlock;        // 1: locked, < 0: terminate; else 0
+        // 出队的索引
         volatile int base;         // index of next slot for poll
+        // 入队的索引
         int top;                   // index of next slot for push
+        // task数组，WorkQueue初始化的时候，并不会初始化这个数组，todo：看下什么时候初始化的
         ForkJoinTask<?>[] array;   // the elements (initially unallocated)
         final ForkJoinPool pool;   // the containing pool (may be null)
+        // 哪个线程是这个WorkQueue的持有者，为null表示这个WorkQueue是共享的
         final ForkJoinWorkerThread owner; // owning thread or null if shared
         volatile Thread parker;    // == owner during call to park; else null
         volatile ForkJoinTask<?> currentJoin;  // task being joined in awaitJoin
@@ -817,6 +838,7 @@ public class ForkJoinPool extends AbstractExecutorService {
             this.pool = pool;
             this.owner = owner;
             // Place indices in the center of array (that is not yet allocated)
+            // 将索引的起始位置，设置在数组的中心位置。
             base = top = INITIAL_QUEUE_CAPACITY >>> 1;
         }
 
@@ -879,13 +901,16 @@ public class ForkJoinPool extends AbstractExecutorService {
          */
         final ForkJoinTask<?>[] growArray() {
             ForkJoinTask<?>[] oldA = array;
+            // 如果array不存在，则初始化，否则就是双倍扩容
             int size = oldA != null ? oldA.length << 1 : INITIAL_QUEUE_CAPACITY;
             if (size > MAXIMUM_QUEUE_CAPACITY)
                 throw new RejectedExecutionException("Queue capacity exceeded");
             int oldMask, t, b;
             ForkJoinTask<?>[] a = array = new ForkJoinTask<?>[size];
-            if (oldA != null && (oldMask = oldA.length - 1) >= 0 &&
-                (t = top) - (b = base) > 0) {
+            // 从老的数组里一个一个取，然后一个一个put到新的数组里。
+            if (oldA != null &&
+                    (oldMask = oldA.length - 1) >= 0 &&  // task数组>1
+                (t = top) - (b = base) > 0) {  // top>base，说明不是task数组里有任务
                 int mask = size - 1;
                 do { // emulate poll from old array, push to new array
                     ForkJoinTask<?> x;
@@ -893,7 +918,7 @@ public class ForkJoinPool extends AbstractExecutorService {
                     int j    = ((b &    mask) << ASHIFT) + ABASE;
                     x = (ForkJoinTask<?>)U.getObjectVolatile(oldA, oldj);
                     if (x != null &&
-                        U.compareAndSwapObject(oldA, oldj, x, null))
+                        U.compareAndSwapObject(oldA, oldj, x, null))  // cas，可能其他线程在窃取任务？
                         U.putObjectVolatile(a, j, x);
                 } while (++b != t);
             }
@@ -905,14 +930,15 @@ public class ForkJoinPool extends AbstractExecutorService {
          * by owner in unshared queues.
          */
         final ForkJoinTask<?> pop() {
+            // 后进先出，即从top取task
             ForkJoinTask<?>[] a; ForkJoinTask<?> t; int m;
             if ((a = array) != null && (m = a.length - 1) >= 0) {
-                for (int s; (s = top - 1) - base >= 0;) {
+                for (int s; (s = top - 1) - base >= 0;) {  // 因为put完，top会+1，所以这里要-1
                     long j = ((m & s) << ASHIFT) + ABASE;
-                    if ((t = (ForkJoinTask<?>)U.getObject(a, j)) == null)
+                    if ((t = (ForkJoinTask<?>)U.getObject(a, j)) == null)  // 取不到task，就返回了
                         break;
-                    if (U.compareAndSwapObject(a, j, t, null)) {
-                        U.putOrderedInt(this, QTOP, s);
+                    if (U.compareAndSwapObject(a, j, t, null)) {  // cas抢占task，失败继续
+                        U.putOrderedInt(this, QTOP, s);  // 将top设置为-1后的top
                         return t;
                     }
                 }
@@ -942,19 +968,21 @@ public class ForkJoinPool extends AbstractExecutorService {
          * Takes next task, if one exists, in FIFO order.
          */
         final ForkJoinTask<?> poll() {
+            // 先进先出，即从base取task
+            // 循环 + cas
             ForkJoinTask<?>[] a; int b; ForkJoinTask<?> t;
             while ((b = base) - top < 0 && (a = array) != null) {
                 int j = (((a.length - 1) & b) << ASHIFT) + ABASE;
                 t = (ForkJoinTask<?>)U.getObjectVolatile(a, j);
-                if (base == b) {
-                    if (t != null) {
-                        if (U.compareAndSwapObject(a, j, t, null)) {
-                            base = b + 1;
-                            return t;
+                if (base == b) {  // check一下，base没被其他线程改过
+                    if (t != null) {  // task不为null（为null，可能是被其他线程先取走了，也可能就是null）
+                        if (U.compareAndSwapObject(a, j, t, null)) {  // cas
+                            base = b + 1;  // base+1
+                            return t;  // 返回取到的task
                         }
                     }
-                    else if (b + 1 == top) // now empty
-                        break;
+                    else if (b + 1 == top) // now empty  // base追平了top，说明task真的是null，task数组是空的。
+                        break;  // 空task数组，跳出循环
                 }
             }
             return null;
@@ -964,6 +992,7 @@ public class ForkJoinPool extends AbstractExecutorService {
          * Takes next task, if one exists, in order specified by mode.
          */
         final ForkJoinTask<?> nextLocalTask() {
+            // 是LIFO队列吗？pop() ：poll()
             return (config & FIFO_QUEUE) == 0 ? pop() : poll();
         }
 
@@ -985,6 +1014,7 @@ public class ForkJoinPool extends AbstractExecutorService {
         */
         final boolean tryUnpush(ForkJoinTask<?> t) {
             ForkJoinTask<?>[] a; int s;
+            // 将t从队列中pop出来，只有t在top位，才能CAS成功
             if ((a = array) != null && (s = top) != base &&
                 U.compareAndSwapObject
                 (a, (((a.length - 1) & --s) << ASHIFT) + ABASE, t, null)) {
@@ -1026,12 +1056,14 @@ public class ForkJoinPool extends AbstractExecutorService {
          * pollAndExecAll. Otherwise implements a specialized pop loop
          * to exec until empty.
          */
+        // 执行当前WorkerQueue中的task。感觉上面的注释写错了，应该是FIFO，调用pollAndExecAll。
         final void execLocalTasks() {
             int b = base, m, s;
             ForkJoinTask<?>[] a = array;
             if (b - (s = top - 1) <= 0 && a != null &&
                 (m = a.length - 1) >= 0) {
-                if ((config & FIFO_QUEUE) == 0) {
+                if ((config & FIFO_QUEUE) == 0) {  // 如果pool是LIFO模式（默认的），走这个if
+                    // 一直pop，从top取task，直到queue里的task执行完
                     for (ForkJoinTask<?> t;;) {
                         if ((t = (ForkJoinTask<?>)U.getAndSetObject
                              (a, ((m & s) << ASHIFT) + ABASE, null)) == null)
@@ -1042,7 +1074,8 @@ public class ForkJoinPool extends AbstractExecutorService {
                             break;
                     }
                 }
-                else
+                else  // 如果pool是FIFO模式走这个
+                    // 一直poll，从base取task，直到queue里的task执行完
                     pollAndExecAll();
             }
         }
@@ -1050,15 +1083,21 @@ public class ForkJoinPool extends AbstractExecutorService {
         /**
          * Executes the given task and any remaining local tasks.
          */
+        // 执行给定的任务（窃取到的）和所有剩余的本地任务（当前worker的WorkerQueue里的任务）。
         final void runTask(ForkJoinTask<?> task) {
             if (task != null) {
+                // 将WorkQueue的scanState变成偶数，代表忙碌
                 scanState &= ~SCANNING; // mark as busy
+                // 执行scan到的task
                 (currentSteal = task).doExec();
                 U.putOrderedObject(this, QCURRENTSTEAL, null); // release for GC
+                // 执行当前WorkerQueue中的本地任务
                 execLocalTasks();
                 ForkJoinWorkerThread thread = owner;
+                // 窃取成功次数+1，如果超过int最大值变负数了，则转移计数给pool的stealCounter字段
                 if (++nsteals < 0)      // collect on overflow
                     transferStealCount(pool);
+                // 将WorkQueue的scanState变成SCANNING
                 scanState |= SCANNING;
                 if (thread != null)
                     thread.afterTopLevelExec();
@@ -1068,6 +1107,7 @@ public class ForkJoinPool extends AbstractExecutorService {
         /**
          * Adds steal count to pool stealCounter if it exists, and resets.
          */
+        // 将WorkerQueue中记录的窃取次数（int类型），转移到pool的stealCounter中。
         final void transferStealCount(ForkJoinPool p) {
             AtomicLong sc;
             if (p != null && (sc = p.stealCounter) != null) {
@@ -1083,38 +1123,49 @@ public class ForkJoinPool extends AbstractExecutorService {
          *
          * @return true if queue empty and task not known to be done
          */
+        // 如果task存在，则从array中移除并执行该task，遍历的同时，移出已取消的task。只应该被awaitJoin调用
         final boolean tryRemoveAndExec(ForkJoinTask<?> task) {
             ForkJoinTask<?>[] a; int m, s, b, n;
-            if ((a = array) != null && (m = a.length - 1) >= 0 &&
-                task != null) {
+            // 如果当前WorkerQueue中有task，进if
+            if ((a = array) != null &&
+                    (m = a.length - 1) >= 0 &&
+                    task != null) {
                 while ((n = (s = top) - (b = base)) > 0) {
-                    for (ForkJoinTask<?> t;;) {      // traverse from s to b
+                    for (ForkJoinTask<?> t;;) {      // traverse from s to b  （从top遍历到base）
                         long j = ((--s & m) << ASHIFT) + ABASE;
                         if ((t = (ForkJoinTask<?>)U.getObject(a, j)) == null)
                             return s + 1 == top;     // shorter than expected
                         else if (t == task) {
                             boolean removed = false;
+                            // 如果这个task在top，pop出来
                             if (s + 1 == top) {      // pop
                                 if (U.compareAndSwapObject(a, j, task, null)) {
                                     U.putOrderedInt(this, QTOP, s);
                                     removed = true;
                                 }
                             }
+                            // 如果不在top位，使用一个EmptyTask来替换这个task
                             else if (base == b)      // replace with proxy
                                 removed = U.compareAndSwapObject(
                                     a, j, task, new EmptyTask());
                             if (removed)
+                                // pop或替换成功，执行该task
                                 task.doExec();
+                            // break，重新进入while，获取最新的top和base进行遍历
                             break;
                         }
                         else if (t.status < 0 && s + 1 == top) {
+                            // 如果top的task已完成，则cas将top设置为null
                             if (U.compareAndSwapObject(a, j, t, null))
                                 U.putOrderedInt(this, QTOP, s);
+                            // break，重新进入while，获取最新的top和base进行遍历
                             break;                  // was cancelled
                         }
                         if (--n == 0)
+                            // n为top和base的差值，表示遍历完了，返回
                             return false;
                     }
+                    // 如果指定的task完成，返回false
                     if (task.status < 0)
                         return false;
                 }
@@ -1266,6 +1317,7 @@ public class ForkJoinPool extends AbstractExecutorService {
      * to paranoically avoid potential initialization circularities
      * as well as to simplify generated code.
      */
+    // 所有线程通用的FJP，由makeCommonPool创建
     static final ForkJoinPool common;
 
     /**
@@ -1342,18 +1394,18 @@ public class ForkJoinPool extends AbstractExecutorService {
 
     /*
      * Bits and masks for field ctl, packed with 4 16 bit subfields:
-     * AC: Number of active running workers minus target parallelism
-     * TC: Number of total workers minus target parallelism
-     * SS: version count and status of top waiting thread
+     * AC: Number of active running workers minus target parallelism    （活跃的执行workers减去目标并行度，这也是为什么FJP构造方法中初始化AC、TC的时候，是-parallelism了，因为此时活跃worker和总worker都是0，0-parallelism不就是-parallelism嘛）
+     * TC: Number of total workers minus target parallelism             （总的workers减去目标并行度）
+     * SS: version count and status of top waiting thread               （搞个版本号，解决链表在CAS的ABA问题）
      * ID: poolIndex of top of Treiber stack of waiters
      *
      * When convenient, we can extract the lower 32 stack top bits
      * (including version bits) as sp=(int)ctl.  The offsets of counts
      * by the target parallelism and the positionings of fields makes
      * it possible to perform the most common checks via sign tests of
-     * fields: When ac is negative, there are not enough active
-     * workers, when tc is negative, there are not enough total
-     * workers.  When sp is non-zero, there are waiting workers.  To
+     * fields: When ac is negative, there are not enough active         （当ac是负数时，代表没有足够活跃的worker，没有到达目标并行度）
+     * workers, when tc is negative, there are not enough total         （当tc是负数时，代表没有足够的总worker，没有到达目标并行度）
+     * workers.  When sp is non-zero, there are waiting workers.  To    （当sp非0时，代表在等待worker）
      * deal with possibly negative fields, we use casts in and out of
      * "short" and/or signed shifts to maintain signedness.
      *
@@ -1364,31 +1416,39 @@ public class ForkJoinPool extends AbstractExecutorService {
      */
 
     // Lower and upper word masks
-    private static final long SP_MASK    = 0xffffffffL;
-    private static final long UC_MASK    = ~SP_MASK;
+    private static final long SP_MASK    = 0xffffffffL;  // 32个1
+    private static final long UC_MASK    = ~SP_MASK;     // 32个1，32个0，1111111...11111000000...0000000
 
     // Active counts
     private static final int  AC_SHIFT   = 48;
-    private static final long AC_UNIT    = 0x0001L << AC_SHIFT;
-    private static final long AC_MASK    = 0xffffL << AC_SHIFT;
+    // AC的最小单元，每次 + AC_UNIT就代表 + 1了。（因为是前16位存储的AC，所以要偏移48位）
+    private static final long AC_UNIT    = 0x0001L << AC_SHIFT;  // 1个1，48个0，1000000000..000
+    private static final long AC_MASK    = 0xffffL << AC_SHIFT;  // |-- 16个1 -- |-- 48个0 --|
 
     // Total counts
     private static final int  TC_SHIFT   = 32;
-    private static final long TC_UNIT    = 0x0001L << TC_SHIFT;
-    private static final long TC_MASK    = 0xffffL << TC_SHIFT;
-    private static final long ADD_WORKER = 0x0001L << (TC_SHIFT + 15); // sign
+    //TAC的最小单元，每次 + TC_UNIT就代表 + 1了。（因为是第二个16位存储的AC，所以要偏移32位）
+    private static final long TC_UNIT    = 0x0001L << TC_SHIFT;  // |-- 31个0 --|-- 1个1  -- |-- 32个0 -- |
+    private static final long TC_MASK    = 0xffffL << TC_SHIFT;  // |-- 16个0 --|-- 16个1 -- |-- 48个0 -- |
+    private static final long ADD_WORKER = 0x0001L << (TC_SHIFT + 15); // sign，  // |-- 16个0 -- |-- 1个1 -- |-- 47个0 -- |
 
     // runState bits: SHUTDOWN must be negative, others arbitrary powers of two
-    private static final int  RSLOCK     = 1;
-    private static final int  RSIGNAL    = 1 << 1;
-    private static final int  STARTED    = 1 << 2;
+    /**
+     * 用第几位，是什么值，来代表状态。
+     * 比如最后一位为1，则代表上锁了，如右数第三位为1，则代表已启动
+     */
+    private static final int  RSLOCK     = 1;        // 锁，runState最后一位
+    private static final int  RSIGNAL    = 1 << 1;   //
+    private static final int  STARTED    = 1 << 2;   // 已启动
     private static final int  STOP       = 1 << 29;
     private static final int  TERMINATED = 1 << 30;
-    private static final int  SHUTDOWN   = 1 << 31;
+    private static final int  SHUTDOWN   = 1 << 31;  // 负数
 
     // Instance fields
     volatile long ctl;                   // main pool control
     volatile int runState;               // lockable status
+    // 左边16位，存储mode，右边16位，存储并发度parallelism。
+    // 默认LIFO_QUEUE，后进先出队列
     final int config;                    // parallelism, mode
     int indexSeed;                       // to generate worker index
     volatile WorkQueue[] workQueues;     // main registry
@@ -1399,9 +1459,14 @@ public class ForkJoinPool extends AbstractExecutorService {
 
     /**
      * Acquires the runState lock; returns current (locked) runState.
+     *
+     * 获取runState的锁
      */
     private int lockRunState() {
         int rs;
+        // 如果当前已经上锁了，则进入awaitRunStateLock
+        // 如果没有上锁，但是cas抢占锁失败了，则进入awaitRunStateLock
+        // 如果没有上锁，且cas成功了，则返回成功后的runState值
         return ((((rs = runState) & RSLOCK) != 0 ||
                  !U.compareAndSwapInt(this, RUNSTATE, rs, rs |= RSLOCK)) ?
                 awaitRunStateLock() : rs);
@@ -1415,14 +1480,17 @@ public class ForkJoinPool extends AbstractExecutorService {
         Object lock;
         boolean wasInterrupted = false;
         for (int spins = SPINS, r = 0, rs, ns;;) {
-            if (((rs = runState) & RSLOCK) == 0) {
-                if (U.compareAndSwapInt(this, RUNSTATE, rs, ns = rs | RSLOCK)) {
+            if (((rs = runState) & RSLOCK) == 0) {  // 如果runState没有上锁
+                if (U.compareAndSwapInt(this, RUNSTATE, rs, ns = rs | RSLOCK)) {  // cas抢占runState的锁
                     if (wasInterrupted) {
                         try {
+                            // ForkJoinWorkerThread是不会进这里的，业务线程才会进这里
+                            // 中断状态设置给业务线程，让业务自行判断
                             Thread.currentThread().interrupt();
                         } catch (SecurityException ignore) {
                         }
                     }
+                    // 返回当前的runState
                     return ns;
                 }
             }
@@ -1441,8 +1509,8 @@ public class ForkJoinPool extends AbstractExecutorService {
                         try {
                             lock.wait();
                         } catch (InterruptedException ie) {
-                            if (!(Thread.currentThread() instanceof
-                                  ForkJoinWorkerThread))
+                            // 业务线程被中断后，才设置中断状态
+                            if (!(Thread.currentThread() instanceof ForkJoinWorkerThread))
                                 wasInterrupted = true;
                         }
                     }
@@ -1460,6 +1528,7 @@ public class ForkJoinPool extends AbstractExecutorService {
      * @param newRunState the next value (must have lock bit clear).
      */
     private void unlockRunState(int oldRunState, int newRunState) {
+        // todo：为啥是false？
         if (!U.compareAndSwapInt(this, RUNSTATE, oldRunState, newRunState)) {
             Object lock = stealCounter;
             runState = newRunState;              // clears RSIGNAL bit
@@ -1478,6 +1547,12 @@ public class ForkJoinPool extends AbstractExecutorService {
      * @return true if successful
      */
     private boolean createWorker() {
+        /**
+         * 创建一个Woker线程并启动，会注册：
+         *      @see ForkJoinPool#registerWorker(java.util.concurrent.ForkJoinWorkerThread)
+         * 如果失败了，则注销这个Woker线程
+         *      @see ForkJoinPool#deregisterWorker(java.util.concurrent.ForkJoinWorkerThread, java.lang.Throwable)
+         */
         ForkJoinWorkerThreadFactory fac = factory;
         Throwable ex = null;
         ForkJoinWorkerThread wt = null;
@@ -1501,24 +1576,32 @@ public class ForkJoinPool extends AbstractExecutorService {
      * idle workers.  On CAS failure, c is refreshed and retried if
      * this holds (otherwise, a new worker is not needed).
      */
+    // 先CAS替换ctl成功，才新增一个worker。
+    // createWorker里如果新增worker失败了，则会回滚ctl的值。
     private void tryAddWorker(long c) {
         boolean add = false;
         do {
+            // worker数+1
             long nc = ((AC_MASK & (c + AC_UNIT)) |
                        (TC_MASK & (c + TC_UNIT)));
-            if (ctl == c) {
+            if (ctl == c) {  // cas之前先判断一次ctl有没有被其他线程改过
                 int rs, stop;                 // check if terminating
-                if ((stop = (rs = lockRunState()) & STOP) == 0)
+                if ((stop = (rs = lockRunState()) & STOP) == 0)  // 加runState锁的同时，返回锁之后的runState值
+                    // 如果runState不是STOP状态的话，则CAS替换ctl
                     add = U.compareAndSwapLong(this, CTL, c, nc);
-                unlockRunState(rs, rs & ~RSLOCK);
+                unlockRunState(rs, rs & ~RSLOCK);  // 解锁
                 if (stop != 0)
+                    // 如果runState是STOP状态的话，则跳出循环
                     break;
                 if (add) {
+                    // 如果CAS成功，则创建worker，并退出循环
                     createWorker();
                     break;
                 }
             }
         } while (((c = ctl) & ADD_WORKER) != 0L && (int)c == 0);
+        // 前一个条件代表：TC是负数
+        // 后一个条件代表：SP=0，没有空闲的worker
     }
 
     /**
@@ -1528,41 +1611,59 @@ public class ForkJoinPool extends AbstractExecutorService {
      * @param wt the worker thread
      * @return the worker's queue
      */
+    // 从ForkJoinWorkerThread构造方法过来的回调，构建并记录这个线程的WorkQueue（找一个奇数的索引位，放WorkQueue）
     final WorkQueue registerWorker(ForkJoinWorkerThread wt) {
         UncaughtExceptionHandler handler;
+        // 守护线程，主线程全部关闭后，守护线程会自动关闭
         wt.setDaemon(true);                           // configure thread
         if ((handler = ueh) != null)
             wt.setUncaughtExceptionHandler(handler);
+        // 给Worker线程创建一个WorkQueue
         WorkQueue w = new WorkQueue(this, wt);
-        int i = 0;                                    // assign a pool index
+        int i = 0;                                    // assign a pool index （分配WorkQueue[]的索引）
         int mode = config & MODE_MASK;
+        // 获取runState的锁
         int rs = lockRunState();
         try {
             WorkQueue[] ws; int n;                    // skip if no array
-            if ((ws = workQueues) != null && (n = ws.length) > 0) {
-                int s = indexSeed += SEED_INCREMENT;  // unlikely to collide
+            if ((ws = workQueues) != null &&
+                    (n = ws.length) > 0) {  // 如果WorkQueue[]不为空才注册，为空就跳过，不注册了
+                int s = indexSeed += SEED_INCREMENT;  // unlikely to collide （不太可能发生碰撞）
+                // WorkQueue[]的掩码
                 int m = n - 1;
+                // 求一个奇数的下标
+                // （前几位都是2的幂次，如果最后一位为0，那肯定是偶数了，如果最后一位是1，拿肯定是奇数了）
                 i = ((s << 1) | 1) & m;               // odd-numbered indices
-                if (ws[i] != null) {                  // collision
+                if (ws[i] != null) {                  // collision （碰撞）
                     int probes = 0;                   // step by approx half n
+                    // 如果碰撞了，就+一段步长，再寻找空位
                     int step = (n <= 4) ? 2 : ((n >>> 1) & EVENMASK) + 2;
                     while (ws[i = (i + step) & m] != null) {
+                        // 如果碰撞次数，已经大于原来的WorkQueue[]长度了，则扩容
                         if (++probes >= n) {
-                            workQueues = ws = Arrays.copyOf(ws, n <<= 1);
+                            // WorkQueue[]双倍扩容
+                            workQueues = ws = Arrays.copyOf(ws, n <<= 1);  // WorkQueue[]长度n = n * 2
+                            // 扩容后，重置碰撞次数probes，重置掩码m
                             m = n - 1;
                             probes = 0;
                         }
                     }
                 }
+                // 随意种子
                 w.hint = s;                           // use as random seed
+                // i是WorkQueue[]的数组下标，mode是pool的mode，记录在WorkQueue的config中。
                 w.config = i | mode;
+                // 设置scanState（活跃的），volatile保证了可见性，直接写到主内存中
                 w.scanState = i;                      // publication fence
                 ws[i] = w;
             }
         } finally {
+            // 释放锁，并唤醒阻塞的线程
             unlockRunState(rs, rs & ~RSLOCK);
         }
+        // 设置Woker线程的名称
         wt.setName(workerNamePrefix.concat(Integer.toString(i >>> 1)));
+        // 返回新建的WorkQueue
         return w;
     }
 
@@ -1572,24 +1673,33 @@ public class ForkJoinPool extends AbstractExecutorService {
      * array, and adjusts counts. If pool is shutting down, tries to
      * complete termination.
      *
-     * @param wt the worker thread, or null if construction failed
+     * @param wt the worker thread, or null if construction failed  （工作线程，为null表示初始化的时候失败了）
      * @param ex the exception causing failure, or null if none
      */
     final void deregisterWorker(ForkJoinWorkerThread wt, Throwable ex) {
         WorkQueue w = null;
+        /**
+         * 将wt中的WorkQueue，从WorkQueue[]中移除
+         */
         if (wt != null && (w = wt.workQueue) != null) {
             WorkQueue[] ws;                           // remove index from array
-            int idx = w.config & SMASK;
-            int rs = lockRunState();
-            if ((ws = workQueues) != null && ws.length > idx && ws[idx] == w)
-                ws[idx] = null;
-            unlockRunState(rs, rs & ~RSLOCK);
+            int idx = w.config & SMASK;  // 后16位记录了在WorkQueue[]中的索引
+            int rs = lockRunState();  // 加runState锁
+            if ((ws = workQueues) != null && ws.length > idx && ws[idx] == w)  // WorkQueue[]不为null，且索引位取出来的WorkQueue和待移出的WorkQueue是同一个
+                ws[idx] = null;  // 将WorkQueue[]的这个地方
+            unlockRunState(rs, rs & ~RSLOCK);  // 解锁
         }
+        /**
+         * cas将ac和tc的数量-1
+         */
         long c;                                       // decrement counts
         do {} while (!U.compareAndSwapLong
                      (this, CTL, c = ctl, ((AC_MASK & (c - AC_UNIT)) |
                                            (TC_MASK & (c - TC_UNIT)) |
-                                           (SP_MASK & c))));
+                                           (SP_MASK & c))));  // 将后32位记录下来，这样ac和tc-1的时候，就不会影响到后32位了。
+        /**
+         * todo：这行后面的还没看
+         */
         if (w != null) {
             w.qlock = -1;                             // ensure set
             w.transferStealCount(this);
@@ -1626,26 +1736,36 @@ public class ForkJoinPool extends AbstractExecutorService {
      * @param ws the worker array to use to find signallees
      * @param q a WorkQueue --if non-null, don't retry if now empty
      */
+    // 激活或者创建Worker
     final void signalWork(WorkQueue[] ws, WorkQueue q) {
         long c; int sp, i; WorkQueue v; Thread p;
-        while ((c = ctl) < 0L) {                       // too few active
-            if ((sp = (int)c) == 0) {                  // no idle workers
-                if ((c & ADD_WORKER) != 0L)            // too few workers
+        while ((c = ctl) < 0L) {                       // too few active  （说明没有到达目标并行度）
+            if ((sp = (int)c) == 0) {                  // no idle workers （SP=0，说明没有空闲的线程挂在ctl里sp的栈顶）
+                if ((c & ADD_WORKER) != 0L)            // too few workers （说明TC的第一位是1，代表负数，而FJP初始化的时候，TC是负的目标并行度，当初始化到目标并行度后，TC就是0了，第一位就是0）
+                    // TC未到目标并行度，新增Worker
                     tryAddWorker(c);
                 break;
             }
             if (ws == null)                            // unstarted/terminated
+                // pool未启动或被中断了，跳出循环
                 break;
             if (ws.length <= (i = sp & SMASK))         // terminated
+                // todo：不懂
                 break;
             if ((v = ws[i]) == null)                   // terminating
                 break;
+            // 下面的这段代码，和tryRelease非常像。
+            // 版本号+1，并设置为激活状态
             int vs = (sp + SS_SEQ) & ~INACTIVE;        // next scanState
+            // 栈顶sp和v中记录的scanState相同时，才进行后面的CAS
             int d = sp - v.scanState;                  // screen CAS
+            // 计算新的ctl：活跃线程数+1，然后栈顶换成v的stackPred
             long nc = (UC_MASK & (c + AC_UNIT)) | (SP_MASK & v.stackPred);
             if (d == 0 && U.compareAndSwapLong(this, CTL, c, nc)) {
+                // cas成功后，将+1后的版本号，记录在scanState中
                 v.scanState = vs;                      // activate v
                 if ((p = v.parker) != null)
+                    // 激活这个线程
                     U.unpark(p);
                 break;
             }
@@ -1664,11 +1784,17 @@ public class ForkJoinPool extends AbstractExecutorService {
      * @param inc the increment to active count (zero when compensating)
      * @return true if successful
      */
+    // 激活v里的工作线程，如果v是SP的栈顶线程的话。
     private boolean tryRelease(long c, WorkQueue v, long inc) {
-        int sp = (int)c, vs = (sp + SS_SEQ) & ~INACTIVE; Thread p;
+        int sp = (int)c;
+        int vs = (sp + SS_SEQ) & ~INACTIVE;   // 将版本号+1，并记录在v的scanState字段中
+        Thread p;
+        // 比较ctl的sp（后32位），即栈顶记录的WorkerQueue，是不是传进来的v，是的话，unpark。
         if (v != null && v.scanState == sp) {          // v is at top of stack
+            // 活跃线程数+1，然后将栈顶（SP中记录）的线程关联的stackPred，放到栈顶上
             long nc = (UC_MASK & (c + inc)) | (SP_MASK & v.stackPred);
             if (U.compareAndSwapLong(this, CTL, c, nc)) {
+                // 变成了scanning或running？
                 v.scanState = vs;
                 if ((p = v.parker) != null)
                     U.unpark(p);
@@ -1684,8 +1810,11 @@ public class ForkJoinPool extends AbstractExecutorService {
      * Top-level runloop for workers, called by ForkJoinWorkerThread.run.
      */
     final void runWorker(WorkQueue w) {
+        // 初始化WorkQueue中的task数组
         w.growArray();                   // allocate queue
+        // 随机种子
         int seed = w.hint;               // initially holds randomization hint
+        // 防止随机种子是0
         int r = (seed == 0) ? 1 : seed;  // avoid 0 for xorShift
         for (ForkJoinTask<?> t;;) {
             if ((t = scan(w, r)) != null)
@@ -1712,6 +1841,9 @@ public class ForkJoinPool extends AbstractExecutorService {
      * @param r a random seed
      * @return a task, or null if none found
      */
+    // 扫描WorkQueue[]并尝试窃取（FIFO，从base）一个顶级的task。
+    // 扫描WorkQueue[]从一个随机索引位置开始，有冲突了（即cas抢task失败）就随机移动一个槽位
+    // todo：
     private ForkJoinTask<?> scan(WorkQueue w, int r) {
         WorkQueue[] ws; int m;
         if ((ws = workQueues) != null && (m = ws.length - 1) > 0 && w != null) {
@@ -1719,19 +1851,21 @@ public class ForkJoinPool extends AbstractExecutorService {
             for (int origin = r & m, k = origin, oldSum = 0, checkSum = 0;;) {
                 WorkQueue q; ForkJoinTask<?>[] a; ForkJoinTask<?> t;
                 int b, n; long c;
-                if ((q = ws[k]) != null) {
+                if ((q = ws[k]) != null) {  // 从WorkQueue[]的下标为k的位置，取一个WorkQueue
                     if ((n = (b = q.base) - q.top) < 0 &&
                         (a = q.array) != null) {      // non-empty
                         long i = (((a.length - 1) & b) << ASHIFT) + ABASE;
                         if ((t = ((ForkJoinTask<?>)
                                   U.getObjectVolatile(a, i))) != null &&
-                            q.base == b) {
+                            q.base == b) {  // 从这个array的下标为i的位置，取一个task，取出来后，判断一下base有没有被动过（动过就是其他线程先窃取走了）
+                            // 如果当前WorkerQueue是SCANNING或RUNNING的状态
                             if (ss >= 0) {
-                                if (U.compareAndSwapObject(a, i, t, null)) {
-                                    q.base = b + 1;
+                                if (U.compareAndSwapObject(a, i, t, null)) {  // 将这个array的下标为i的位置，设置为null
+                                    q.base = b + 1;  // base + 1
                                     if (n < -1)       // signal others
+                                        // 相当于top-base>1，说明还有挺多任务的，唤醒或创建其他线程
                                         signalWork(ws, q);
-                                    return t;
+                                    return t;  // 返回task
                                 }
                             }
                             else if (oldSum == 0 &&   // try to activate
@@ -1740,27 +1874,35 @@ public class ForkJoinPool extends AbstractExecutorService {
                         }
                         if (ss < 0)                   // refresh
                             ss = w.scanState;
+                        // 重新算一个随机值
                         r ^= r << 1; r ^= r >>> 3; r ^= r << 10;
                         origin = k = r & m;           // move and rescan
                         oldSum = checkSum = 0;
-                        continue;
+                        continue;  // 继续寻找WorkerQueue
                     }
+                    // 将那些没有task的WorkerQueue的base相加，一旦找到一次非空的，就会把checkSum的值，转给oldSum，checkSum自己清0
                     checkSum += b;
                 }
+                // 运行到这里，说明WorkQueue[]的某个槽位是null，或者这个槽位的WorkerQueue里没有task
+                // todo：这里还有不明白的，checkSum的作用？当前WorkerQueue设置为inactive后，不是有可能还能取到任务吗？
                 if ((k = (k + 1) & m) == origin) {    // continue until stable
                     if ((ss >= 0 || (ss == (ss = w.scanState))) &&
                         oldSum == (oldSum = checkSum)) {
                         if (ss < 0 || w.qlock < 0)    // already inactive
                             break;
+                        // 将当前WorkerQueue的scanState设置成非活跃（负数）
                         int ns = ss | INACTIVE;       // try to inactivate
+                        // 计算最新的ctl值，获取线程数-1，然后栈顶（SP）记录当前WorkerQueue的scanState
                         long nc = ((SP_MASK & ns) |
                                    (UC_MASK & ((c = ctl) - AC_UNIT)));
+                        // 在当前WorkerQueue中，记录前一个栈顶的SP（即前一个WorkerQueue的scanState）
                         w.stackPred = (int)c;         // hold prev stack top
                         U.putInt(w, QSCANSTATE, ns);
+                        // cas替换
                         if (U.compareAndSwapLong(this, CTL, c, nc))
                             ss = ns;
                         else
-                            w.scanState = ss;         // back out
+                            w.scanState = ss;         // back out  // 为啥这里直接赋值，前几行却是U.putInt(w, QSCANSTATE, ns);？
                     }
                     checkSum = 0;
                 }
@@ -1787,6 +1929,7 @@ public class ForkJoinPool extends AbstractExecutorService {
             return false;
         for (int pred = w.stackPred, spins = SPINS, ss;;) {
             if ((ss = w.scanState) >= 0)
+                // 代表WorkQueue是RUNNING或SCANNING的状态
                 break;
             else if (spins > 0) {
                 r ^= r << 6; r ^= r >>> 21; r ^= r << 7;
@@ -1803,6 +1946,7 @@ public class ForkJoinPool extends AbstractExecutorService {
                 return false;
             else if (!Thread.interrupted()) {
                 long c, prevctl, parkTime, deadline;
+                // ac中记录的值+config中记录的目标并行度 = 真正的活跃线程数
                 int ac = (int)((c = ctl) >> AC_SHIFT) + (config & SMASK);
                 if ((ac <= 0 && tryTerminate(false, false)) ||
                     (runState & STOP) != 0)           // pool terminating
@@ -1818,11 +1962,16 @@ public class ForkJoinPool extends AbstractExecutorService {
                 else
                     prevctl = parkTime = deadline = 0L;
                 Thread wt = Thread.currentThread();
+                // parkBlocker是Thread对象的属性，模拟LockSupport
                 U.putObject(wt, PARKBLOCKER, this);   // emulate LockSupport
+                // WorkQueue中记录一下，park的线程
                 w.parker = wt;
                 if (w.scanState < 0 && ctl == c)      // recheck before park
+                    // 挂起
                     U.park(false, parkTime);
+                // 清除，为什么这里用UnSafe，而上面是直接赋值的
                 U.putOrderedObject(w, QPARKER, null);
+                // 清除
                 U.putObject(wt, PARKBLOCKER, null);
                 if (w.scanState >= 0)
                     break;
@@ -1912,10 +2061,12 @@ public class ForkJoinPool extends AbstractExecutorService {
     private void helpStealer(WorkQueue w, ForkJoinTask<?> task) {
         WorkQueue[] ws = workQueues;
         int oldSum = 0, checkSum, m;
-        if (ws != null && (m = ws.length - 1) >= 0 && w != null &&
-            task != null) {
+        if (ws != null &&
+                (m = ws.length - 1) >= 0 &&
+                w != null &&
+                task != null) {  // 先判空
             do {                                       // restart point
-                checkSum = 0;                          // for stability check
+                checkSum = 0;                          // for stability check  （用于稳定性检查）
                 ForkJoinTask<?> subtask;
                 WorkQueue j = w, v;                    // v is subtask stealer
                 descent: for (subtask = task; subtask.status >= 0; ) {
@@ -1982,28 +2133,36 @@ public class ForkJoinPool extends AbstractExecutorService {
         boolean canBlock;
         WorkQueue[] ws; long c; int m, pc, sp;
         if (w == null || w.qlock < 0 ||           // caller terminating
-            (ws = workQueues) == null || (m = ws.length - 1) <= 0 ||
+            (ws = workQueues) == null ||
+                (m = ws.length - 1) <= 0 ||
             (pc = config & SMASK) == 0)           // parallelism disabled
             canBlock = false;
         else if ((sp = (int)(c = ctl)) != 0)      // release idle worker
+            // SP栈顶有闲置的worker，尝试unpark它
             canBlock = tryRelease(c, ws[sp & m], 0L);
-        else {
+        else {  // SP栈顶没有闲置的worker
+            // 实际的ac
             int ac = (int)(c >> AC_SHIFT) + pc;
+            // 实际的tc
             int tc = (short)(c >> TC_SHIFT) + pc;
-            int nbusy = 0;                        // validate saturation
+            int nbusy = 0;                        // validate saturation  （验证饱和度）
             for (int i = 0; i <= m; ++i) {        // two passes of odd indices
                 WorkQueue v;
-                if ((v = ws[((i << 1) | 1) & m]) != null) {
+                if ((v = ws[((i << 1) | 1) & m]) != null) {  // 这里奇数代表工作队列（偶数是提交队列）
                     if ((v.scanState & SCANNING) != 0)
+                        // 如果发现一个SCANNING的工作队列，退出for循环
                         break;
                     ++nbusy;
                 }
             }
             if (nbusy != (tc << 1) || ctl != c)
-                canBlock = false;                 // unstable or stale
+                // todo：前一个判断条件不明白
+                canBlock = false;                 // unstable or stale  （不稳定或过时）
             else if (tc >= pc && ac > 1 && w.isEmpty()) {
+                // 活跃线程-1（只动前16个bit，剩余48bit不变）
                 long nc = ((AC_MASK & (c - AC_UNIT)) |
                            (~AC_MASK & c));       // uncompensated
+                // CAS成功后，进入阻塞
                 canBlock = U.compareAndSwapLong(this, CTL, c, nc);
             }
             else if (tc >= MAX_CAP ||
@@ -2040,14 +2199,22 @@ public class ForkJoinPool extends AbstractExecutorService {
                 (CountedCompleter<?>)task : null;
             for (;;) {
                 if ((s = task.status) < 0)
+                    // 如果status=负数，代表task完成了，退出自旋，返回NORMAL、CANCELLED、EXCEPTIONAL
                     break;
                 if (cc != null)
                     helpComplete(w, cc, 0);
                 else if (w.base == w.top || w.tryRemoveAndExec(task))
+                    // 1、w.base == w.top，说明WorkQueue为空，代表task别其他线程窃取了
+                    // 2、返回true，代表WorkQueue为空，或者不清楚任务有没有执行
+                    //    返回false，代表当前线程，执行了这个task
+
+                    // 代表task被其他线程窃取走了，当前线程也不能闲着啊，帮助执行窃取者的task
                     helpStealer(w, task);
                 if ((s = task.status) < 0)
+                    // 如果status=负数，代表task完成了，退出自旋，返回NORMAL、CANCELLED、EXCEPTIONAL
                     break;
                 long ms, ns;
+                // 计算一个wait时间
                 if (deadline == 0L)
                     ms = 0L;
                 else if ((ns = deadline - System.nanoTime()) <= 0L)
@@ -2055,6 +2222,7 @@ public class ForkJoinPool extends AbstractExecutorService {
                 else if ((ms = TimeUnit.NANOSECONDS.toMillis(ns)) <= 0L)
                     ms = 1L;
                 if (tryCompensate(w)) {
+                    // 阻塞等待
                     task.internalWait(ms);
                     U.getAndAddLong(this, CTL, AC_UNIT);
                 }
@@ -2318,6 +2486,7 @@ public class ForkJoinPool extends AbstractExecutorService {
         int r;                                    // initialize caller's probe
         if ((r = ThreadLocalRandom.getProbe()) == 0) {
             ThreadLocalRandom.localInit();
+            // 获取当前线程的随机数
             r = ThreadLocalRandom.getProbe();
         }
         for (;;) {
@@ -2327,28 +2496,44 @@ public class ForkJoinPool extends AbstractExecutorService {
                 tryTerminate(false, false);     // help terminate
                 throw new RejectedExecutionException();
             }
-            else if ((rs & STARTED) == 0 ||     // initialize
+            /**
+             * 这个if的作用：初始化task队列
+             */
+            else if ((rs & STARTED) == 0 ||     // initialize（初始化了，还未启动）
                      ((ws = workQueues) == null || (m = ws.length - 1) < 0)) {
                 int ns = 0;
+                // 锁住runState
                 rs = lockRunState();
                 try {
+                    // 获得锁后，再次确认一下有没有启动
                     if ((rs & STARTED) == 0) {
+                        // 初始化偷任务次数，是这么翻译吗？
                         U.compareAndSwapObject(this, STEALCOUNTER, null,
                                                new AtomicLong());
+                        // 右边16位，记录了并发度。这里会把并发度变成2的n次。
                         // create workQueues array with size a power of two
                         int p = config & SMASK; // ensure at least 2 slots
+                        // 这里将某个数变成2的n次方的方式，和HashMap里一模一样
                         int n = (p > 1) ? p - 1 : 1;
                         n |= n >>> 1; n |= n >>> 2;  n |= n >>> 4;
                         n |= n >>> 8; n |= n >>> 16; n = (n + 1) << 1;
+                        // 初始化WorkQueue队列
                         workQueues = new WorkQueue[n];
                         ns = STARTED;
                     }
                 } finally {
+                    // 解锁的同时，将ns的状态(STARTED)，写到runState里
                     unlockRunState(rs, (rs & ~RSLOCK) | ns);
                 }
             }
+            /**
+             * 这个if的作用：
+             * 选定一个偶数槽位的WorkQueue，如果队列不为null，就把task加到队列的内部task数组中。
+             */
             else if ((q = ws[k = r & m & SQMASK]) != null) {
+                // 如果WorkQueue队列未被锁，cas获取锁
                 if (q.qlock == 0 && U.compareAndSwapInt(q, QLOCK, 0, 1)) {
+                    // 获取task数组
                     ForkJoinTask<?>[] a = q.array;
                     int s = q.top;
                     boolean submitted = false; // initial submission or resizing
@@ -2356,7 +2541,9 @@ public class ForkJoinPool extends AbstractExecutorService {
                         if ((a != null && a.length > s + 1 - q.base) ||
                             (a = q.growArray()) != null) {
                             int j = (((a.length - 1) & s) << ASHIFT) + ABASE;
+                            // 将task设置到数组中的top位
                             U.putOrderedObject(a, j, task);
+                            // WorkQueue队列的top+1
                             U.putOrderedInt(q, QTOP, s + 1);
                             submitted = true;
                         }
@@ -2364,20 +2551,29 @@ public class ForkJoinPool extends AbstractExecutorService {
                         U.compareAndSwapInt(q, QLOCK, 1, 0);
                     }
                     if (submitted) {
+                        // todo:
                         signalWork(ws, q);
                         return;
                     }
                 }
                 move = true;                   // move on failure
             }
-            else if (((rs = runState) & RSLOCK) == 0) { // create new queue
+            /**
+             * 这个if的作用：
+             * 前一个if如果槽位是null，则新建WorkQueue并填充
+             */
+            else if (((rs = runState) & RSLOCK) == 0) { // create new queue（没有上锁，才会进这个if）
+                // 前一个if发现这个槽位是null，所以这里新建WorkQueue队列
                 q = new WorkQueue(this, null);
                 q.hint = r;
+                // k是槽位的下标，是个提交队列（submission queue），所以是共享队列
                 q.config = k | SHARED_QUEUE;
+                // 新建的WorkQueue，scanState状态为inactive
                 q.scanState = INACTIVE;
                 rs = lockRunState();           // publish index
                 if (rs > 0 &&  (ws = workQueues) != null &&
                     k < ws.length && ws[k] == null)
+                    // 获取runState的锁后，往这个null的槽位，设置新建的WorkQueue
                     ws[k] = q;                 // else terminated
                 unlockRunState(rs, rs & ~RSLOCK);
             }
@@ -2396,27 +2592,31 @@ public class ForkJoinPool extends AbstractExecutorService {
      *
      * @param task the task. Caller must ensure non-null.
      */
+    // 提交task到提交队列（submission queue）中。提交队列在WorkQueue[]的偶数位
     final void externalPush(ForkJoinTask<?> task) {
         WorkQueue[] ws; WorkQueue q; int m;
-        int r = ThreadLocalRandom.getProbe();
+        int r = ThreadLocalRandom.getProbe();  // 获取一个当前线程的随机数
         int rs = runState;
-        if ((ws = workQueues) != null && (m = (ws.length - 1)) >= 0 &&
-            (q = ws[m & r & SQMASK]) != null && r != 0 && rs > 0 &&
-            U.compareAndSwapInt(q, QLOCK, 0, 1)) {
+        if ((ws = workQueues) != null &&  // WorkQueue[]不为null
+                (m = (ws.length - 1)) >= 0 &&  // WorkQueue[]长度至少为1，顺便算出掩码 m
+                (q = ws[m & r & SQMASK]) != null && // 从WorkQueue[]的偶数槽取出一个WorkQueue
+                r != 0 &&
+                rs > 0 &&
+            U.compareAndSwapInt(q, QLOCK, 0, 1)) {  // CAS锁住这个WorkQueue
             ForkJoinTask<?>[] a; int am, n, s;
-            if ((a = q.array) != null &&
-                (am = a.length - 1) > (n = (s = q.top) - q.base)) {
-                int j = ((am & s) << ASHIFT) + ABASE;
-                U.putOrderedObject(a, j, task);
-                U.putOrderedInt(q, QTOP, s + 1);
-                U.putIntVolatile(q, QLOCK, 0);
+            if ((a = q.array) != null &&  // WorkQueue中的task数组不为null
+                (am = a.length - 1) > (n = (s = q.top) - q.base)) {  // todo：
+                int j = ((am & s) << ASHIFT) + ABASE;  // todo：
+                U.putOrderedObject(a, j, task);  // 把task写入到array的第j个位置
+                U.putOrderedInt(q, QTOP, s + 1);  // CAS顺序写入，将top值+1
+                U.putIntVolatile(q, QLOCK, 0);  // 释放WorkQueue的锁，不用CAS？
                 if (n <= 1)
-                    signalWork(ws, q);
+                    signalWork(ws, q);  // 如果这个WorkQueue已经空了，唤醒其他的？
                 return;
             }
-            U.compareAndSwapInt(q, QLOCK, 1, 0);
+            U.compareAndSwapInt(q, QLOCK, 1, 0);  // CAS释放WorkQueue锁
         }
-        externalSubmit(task);
+        externalSubmit(task);  // 前面的if失败了，就进入完整的代码
     }
 
     /**
@@ -2567,8 +2767,12 @@ public class ForkJoinPool extends AbstractExecutorService {
         this.workerNamePrefix = workerNamePrefix;
         this.factory = factory;
         this.ueh = handler;
+        // 默认后进先出队列，nextLocalTask的时候，会决定是poll还是pop
         this.config = (parallelism & SMASK) | mode;
+        // 这里活跃线程和总线程都是0，所以其实是np = (long)(0-parallelism)
+        // AC和TC记录的是：线程数-目标并发度
         long np = (long)(-parallelism); // offset ctl counts
+        // 最左边16位，记录活跃的。第二个16位，记录总的。
         this.ctl = ((np << AC_SHIFT) & AC_MASK) | ((np << TC_SHIFT) & TC_MASK);
     }
 

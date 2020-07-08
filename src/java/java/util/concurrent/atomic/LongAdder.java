@@ -67,6 +67,8 @@ import java.io.Serializable;
  * @since 1.8
  * @author Doug Lea
  */
+// AtomicLong单个值在cas，高并发下竞争比较激烈。
+// 这里使用一个数组，每个槽位都可以cas。提高了并发性。
 public class LongAdder extends Striped64 implements Serializable {
     private static final long serialVersionUID = 7249069246863182397L;
 
@@ -83,10 +85,19 @@ public class LongAdder extends Striped64 implements Serializable {
      */
     public void add(long x) {
         Cell[] as; long b, v; int m; Cell a;
+
+        // 进入if的条件（没进入if说明没竞争，cas把值累加在Striped64的base字段上）
+        // 1、有cells了，代表产生了竞争
+        // 2、没有cells，但是cas失败了，说明有竞争
         if ((as = cells) != null || !casBase(b = base, b + x)) {
-            boolean uncontended = true;
+            boolean uncontended = true;  // 无竞争的
+            // 进入if的条件（没进入if说明没竞争，cas把值累加在Cell的value字段上）
+            // 1、as为null
+            // 2、as不为null，但是长度为0
+            // 3、as不为null且长度>0，但是hash求得的槽位是null（这个槽位还没有初始化Cell）
+            // 4、第三点的槽位不为null，但是cas失败了（有竞争）
             if (as == null || (m = as.length - 1) < 0 ||
-                (a = as[getProbe() & m]) == null ||
+                (a = as[getProbe() & m]) == null ||  // getProbe()就是获取当前线程的随机数
                 !(uncontended = a.cas(v = a.value, v + x)))
                 longAccumulate(x, null, uncontended);
         }

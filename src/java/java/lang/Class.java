@@ -393,6 +393,10 @@ public final class Class<T> implements java.io.Serializable,
     public T newInstance()
         throws InstantiationException, IllegalAccessException
     {
+        /**
+         * 这个和new一个对象的效果是一样的，这个调用的空构造。
+         * 底层还是Constructor的newInstance方法
+         */
         if (System.getSecurityManager() != null) {
             checkMemberAccess(Member.PUBLIC, Reflection.getCallerClass(), false);
         }
@@ -507,6 +511,7 @@ public final class Class<T> implements java.io.Serializable,
      *            null.
      * @since JDK1.1
      */
+    // if(a.isAssignableFrom(b))，则a是b是子类或实现类
     public native boolean isAssignableFrom(Class<?> cls);
 
 

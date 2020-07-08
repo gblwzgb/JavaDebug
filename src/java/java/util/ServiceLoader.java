@@ -186,21 +186,26 @@ public final class ServiceLoader<S>
     implements Iterable<S>
 {
 
+    // 实现类就放在这个目录下。文件名就是接口的全限定名
     private static final String PREFIX = "META-INF/services/";
 
     // The class or interface representing the service being loaded
+    // 指待加载的类或者接口
     private final Class<S> service;
 
     // The class loader used to locate, load, and instantiate providers
+    // 类加载器，负责：定位、加载、实例化实现类
     private final ClassLoader loader;
 
     // The access control context taken when the ServiceLoader is created
     private final AccessControlContext acc;
 
-    // Cached providers, in instantiation order
+    // Cached providers, in instantiation order  （缓存实现类，按实例化顺序）
+    // <实现类的类名，实现类>
     private LinkedHashMap<String,S> providers = new LinkedHashMap<>();
 
     // The current lazy-lookup iterator
+    // 当前的惰性查找迭代器
     private LazyIterator lookupIterator;
 
     /**
@@ -215,12 +220,22 @@ public final class ServiceLoader<S>
      * can be installed into a running Java virtual machine.
      */
     public void reload() {
+        /**
+         * 机翻：
+         * 清除此加载器的服务者缓存，所有的供应商将被重新加载。
+         * 调用此方法后，在后续调用iterator方法懒洋洋地查找并从头实例化供应商，就像是一个新创建的加载器来完成。
+         * 此方法适用于使用在其新的供应商可以安装到正在运行的Java虚拟机的情况。
+         */
+        // 先清除缓存
         providers.clear();
+        // 创建一个lazy的迭代器，只有在next的时候，才会加载实现类
         lookupIterator = new LazyIterator(service, loader);
     }
 
     private ServiceLoader(Class<S> svc, ClassLoader cl) {
+        // 判空
         service = Objects.requireNonNull(svc, "Service interface cannot be null");
+        // 如果没指定ClassLoader，则使用系统默认的类加载器
         loader = (cl == null) ? ClassLoader.getSystemClassLoader() : cl;
         acc = (System.getSecurityManager() != null) ? AccessController.getContext() : null;
         reload();
@@ -304,6 +319,7 @@ public final class ServiceLoader<S>
             in = u.openStream();
             r = new BufferedReader(new InputStreamReader(in, "utf-8"));
             int lc = 1;
+            // 按行解析
             while ((lc = parseLine(service, u, r, lc, names)) >= 0);
         } catch (IOException x) {
             fail(service, "Error reading configuration file", x);
@@ -326,7 +342,9 @@ public final class ServiceLoader<S>
 
         Class<S> service;
         ClassLoader loader;
+        // 可以有多个META-INF/services/xxxx文件
         Enumeration<URL> configs = null;
+        // 每个文件下，可以配置多个实现类
         Iterator<String> pending = null;
         String nextName = null;
 
@@ -339,9 +357,11 @@ public final class ServiceLoader<S>
             if (nextName != null) {
                 return true;
             }
-            if (configs == null) {
+            if (configs == null) {  // 第一次进来，会是null
                 try {
+                    // 文件名路径为：META-INF/services/接口或类全限定名，如：META-INF/services/java.sql.Driver
                     String fullName = PREFIX + service.getName();
+                    // 加载文件资源
                     if (loader == null)
                         configs = ClassLoader.getSystemResources(fullName);
                     else
@@ -350,12 +370,16 @@ public final class ServiceLoader<S>
                     fail(service, "Error locating configuration files", x);
                 }
             }
+            // 如果pending为空，或者pending遍历完了
             while ((pending == null) || !pending.hasNext()) {
+                // 获取下一个文件，解析
                 if (!configs.hasMoreElements()) {
                     return false;
                 }
+                // 解析当前配置文件下的配置
                 pending = parse(service, configs.nextElement());
             }
+            // 暂存下一个实现类名，这样next()方法可以直接调用
             nextName = pending.next();
             return true;
         }
@@ -367,24 +391,31 @@ public final class ServiceLoader<S>
             nextName = null;
             Class<?> c = null;
             try {
+                // 使用loader将这个实现类，加载成一个Class类，不实例化。这里会加载static方法。
                 c = Class.forName(cn, false, loader);
             } catch (ClassNotFoundException x) {
+                // 没有这个类
                 fail(service,
                      "Provider " + cn + " not found");
             }
             if (!service.isAssignableFrom(c)) {
+                // 如果实现类，不是service或接口的子类、实现类，报错
                 fail(service,
                      "Provider " + cn  + " not a subtype");
             }
             try {
+                // 实例化，然后强转
                 S p = service.cast(c.newInstance());
+                // 放到缓存中
                 providers.put(cn, p);
                 return p;
             } catch (Throwable x) {
+                // 实例化失败
                 fail(service,
                      "Provider " + cn + " could not be instantiated",
                      x);
             }
+            // 其他错误
             throw new Error();          // This cannot happen
         }
 
@@ -534,6 +565,7 @@ public final class ServiceLoader<S>
      * @return A new service loader
      */
     public static <S> ServiceLoader<S> load(Class<S> service) {
+        // 上下文线程类加载器，用于解决父加载器无法加载子加载器的类的问题。
         ClassLoader cl = Thread.currentThread().getContextClassLoader();
         return ServiceLoader.load(service, cl);
     }

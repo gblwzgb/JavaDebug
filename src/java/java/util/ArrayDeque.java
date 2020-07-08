@@ -248,6 +248,7 @@ public class ArrayDeque<E> extends AbstractCollection<E>
         if (e == null)
             throw new NullPointerException();
         elements[tail] = e;
+        // 把数组想成一个环，如果tail = head了，说明数组满了，扩容
         if ( (tail = (tail + 1) & (elements.length - 1)) == head)
             doubleCapacity();
     }

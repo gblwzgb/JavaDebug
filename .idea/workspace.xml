@@ -1,7 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ChangeListManager">
-    <list default="true" id="61efaa5b-0f84-454a-af44-6a7f4e609699" name="Default Changelist" comment="" />
+    <list default="true" id="61efaa5b-0f84-454a-af44-6a7f4e609699" name="Default Changelist" comment="">
+      <change afterPath="$PROJECT_DIR$/src/test/VolatileTest.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/out/production/JavaDebug/test/MapTest.class" beforeDir="false" afterPath="$PROJECT_DIR$/out/production/JavaDebug/test/MapTest.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/java/java/util/Timer.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/java/java/util/Timer.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/java/java/util/concurrent/ConcurrentHashMap.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/java/java/util/concurrent/ConcurrentHashMap.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/java/java/util/concurrent/ScheduledThreadPoolExecutor.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/java/java/util/concurrent/ScheduledThreadPoolExecutor.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/test/MapTest.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/test/MapTest.java" afterDir="false" />
+    </list>
     <option name="EXCLUDED_CONVERTED_TO_IGNORED" value="true" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -14,6 +21,9 @@
         <option value="Class" />
       </list>
     </option>
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
   <component name="ProjectId" id="1d416We42A518uXwJfPU0bl73Lx" />
   <component name="PropertiesComponent">

@@ -105,6 +105,7 @@ public class FutureTask<V> implements RunnableFuture<V> {
     /** The thread running the callable; CASed during run() */
     private volatile Thread runner;
     /** Treiber stack of waiting threads */
+    // 栈结构，后入先出，记录的是最后入栈的
     private volatile WaitNode waiters;
 
     /**
@@ -186,8 +187,10 @@ public class FutureTask<V> implements RunnableFuture<V> {
      * @throws CancellationException {@inheritDoc}
      */
     public V get() throws InterruptedException, ExecutionException {
+        // volatile保证了可见性
         int s = state;
         if (s <= COMPLETING)
+            // 如果是NEW或者COMPLETING，表示任务还没执行完成，无超时等待，除非被打断。
             s = awaitDone(false, 0L);
         return report(s);
     }
@@ -253,6 +256,7 @@ public class FutureTask<V> implements RunnableFuture<V> {
     }
 
     public void run() {
+        // 如果state不为new，或者cas抢占失败，则return
         if (state != NEW ||
             !UNSAFE.compareAndSwapObject(this, runnerOffset,
                                          null, Thread.currentThread()))
@@ -363,6 +367,7 @@ public class FutureTask<V> implements RunnableFuture<V> {
      */
     private void finishCompletion() {
         // assert state > COMPLETING;
+        // 遍历唤醒所有等待的线程
         for (WaitNode q; (q = waiters) != null;) {
             if (UNSAFE.compareAndSwapObject(this, waitersOffset, q, null)) {
                 for (;;) {
@@ -395,6 +400,7 @@ public class FutureTask<V> implements RunnableFuture<V> {
      */
     private int awaitDone(boolean timed, long nanos)
         throws InterruptedException {
+        // 如果是超时阻塞，计算超时时间，这里纳秒是相对时间
         final long deadline = timed ? System.nanoTime() + nanos : 0L;
         WaitNode q = null;
         boolean queued = false;
@@ -411,13 +417,16 @@ public class FutureTask<V> implements RunnableFuture<V> {
                 return s;
             }
             else if (s == COMPLETING) // cannot time out yet
+                // 说明任务执行完毕了，正在设置返回结果，让出cpu时间片
                 Thread.yield();
             else if (q == null)
+                // 走到这里，说明任务还没完成，新建一个等待节点，等到下次loop的时候，加入等待队列
                 q = new WaitNode();
-            else if (!queued)
+            else if (!queued)  // 是否已经入队
+                // 如果还没如队列，加入等待队列的队尾，失败loop重试
                 queued = UNSAFE.compareAndSwapObject(this, waitersOffset,
                                                      q.next = waiters, q);
-            else if (timed) {
+            else if (timed) {  // 是否超时等待，是则挂起一段时间
                 nanos = deadline - System.nanoTime();
                 if (nanos <= 0L) {
                     removeWaiter(q);
@@ -426,7 +435,7 @@ public class FutureTask<V> implements RunnableFuture<V> {
                 LockSupport.parkNanos(this, nanos);
             }
             else
-                LockSupport.park(this);
+                LockSupport.park(this);  // 无超时挂起
         }
     }
 
