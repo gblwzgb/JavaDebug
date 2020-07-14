@@ -185,8 +185,12 @@ import sun.security.util.SecurityConstants;
  * 每个线程都有一个标识名。 多个线程可以具有相同的名称。 如果创建一个线程时没有指定名称，就会为其生成一个新名称。
  * 除非另有说明，传递一个null参数构造函数或方法在这个类会导致NullPointerException被抛出。
  */
-public
-class Thread implements Runnable {
+// 感悟：
+// 1、为什么wait、join、sleep状态下被中断，抛异常后会清空中断标志位？
+//      答：其实中断标志位的存在意义，就是告诉用户线程被中断了。
+//          这里抛异常的时候，用户通过异常，就可以知道被中断了。
+//          其次interupted()在返回是否被中断的同时，也会清除中断标志位（已经告诉你了，你自己看着办，我要清掉了）
+public class Thread implements Runnable {
     /* Make sure registerNatives is the first thing <clinit> does. */
     // 这一步发生在类的生命周期：初始化阶段
     private static native void registerNatives();

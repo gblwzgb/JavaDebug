@@ -53,6 +53,19 @@ import java.io.Closeable;
  * @since 1.4
  */
 
+/**
+ * I/O操作的联系。
+ *
+ * 通道表示与诸如硬件设备，文件，网络socket或程序组件之类的实体的打开的连接，
+ * 该实体能够执行一个或多个不同的I/O操作，例如读取或写入。
+ *
+ * 通道要么是打开的，要么是关闭的。通道在创建时即打开，并在关闭后仍保持关闭状态。
+ * 通道一旦关闭，任何尝试调用该通道的IO操作，都会抛ClosedChannelException异常。
+ * 可通过isOpen()方法，确定通道是不是打开的。
+ *
+ * 通常，通道旨在安全用于多线程访问，如扩展和实现此接口的接口和类的规范中所述。
+ *
+ */
 public interface Channel extends Closeable {
 
     /**
@@ -60,6 +73,7 @@ public interface Channel extends Closeable {
      *
      * @return <tt>true</tt> if, and only if, this channel is open
      */
+    // 通道是否打开着
     public boolean isOpen();
 
     /**
@@ -79,6 +93,7 @@ public interface Channel extends Closeable {
      *
      * @throws  IOException  If an I/O error occurs
      */
+    // 关闭通道，一个线程先调，后一个线程再调这个的话，后一个线程会阻塞直到第一个线程完成关闭
     public void close() throws IOException;
 
 }

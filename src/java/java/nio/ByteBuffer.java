@@ -759,15 +759,39 @@ public abstract class ByteBuffer
      * @throws  ReadOnlyBufferException
      *          If this buffer is read-only
      */
+    /**
+     * 相对批量put方法（可选操作）
+     *
+     * 此方法将给定源缓冲区中剩余的字节转移到此缓冲区中。
+     * 如果源缓冲区中剩余的字节数大于此缓冲区中的字节数，
+     * 即src.remaining() > remaining()，则不传输任何字节，并抛出BufferOverflowException。
+     *
+     * 否则，此方法从每个缓冲区的当前position开始，将n = src.remaining()字节从给定缓冲区复制到此缓冲区中。
+     * 然后将两个缓冲区的position加n。
+     *
+     * 换句话说，以dst.put(src)形式调用此方法具有与循环完全相同的效果。
+     *
+     *      while (src.hasRemaining())
+     *          dst.put(src.get());
+     *
+     * 除了首先检查此缓冲区中是否有足够的空间，而且它的效率可能要高得多。
+     *
+     * @param src 要从中读取字节的源缓冲区；一定不能是当前这个缓冲区
+     * @return 当前缓冲区
+     */
     public ByteBuffer put(ByteBuffer src) {
         if (src == this)
+            // 源和目标不能相同，非法参数异常
             throw new IllegalArgumentException();
         if (isReadOnly())
+            // 当前buffer是只读的，抛异常
             throw new ReadOnlyBufferException();
         int n = src.remaining();
         if (n > remaining())
+            // 源的待写字节数，大于目标的可写字节数，溢出了。
             throw new BufferOverflowException();
         for (int i = 0; i < n; i++)
+            // 遍历每一个字节，并转移（源buffer的position移动了）
             put(src.get());
         return this;
     }

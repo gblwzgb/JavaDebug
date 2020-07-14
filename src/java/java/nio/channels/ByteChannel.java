@@ -37,7 +37,7 @@ import java.io.IOException;
  * @author JSR-51 Expert Group
  * @since 1.4
  */
-
+// 可以读取和写入字节的通道。这个接口简单统一了一下ReadableByteChannel和WritableByteChannel。没有定义新的操作。
 public interface ByteChannel
     extends ReadableByteChannel, WritableByteChannel
 {

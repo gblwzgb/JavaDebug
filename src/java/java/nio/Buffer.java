@@ -172,6 +172,65 @@ import java.util.Spliterator;
  * @since 1.4
  */
 
+/**
+ * 特定原始类型的数据的容器。
+ *
+ * 缓冲区是特定基本类型的元素的线性有限序列。
+ * 除其内容外，缓冲区的基本属性还包括capacity、limit、position：
+ *      - 缓冲区的capacity是其包含的元素数。缓冲区的capacity永远不会为负，也不会改变。
+ *      - 缓冲区的limit是不应读取或写入的第一个元素的索引。缓冲区的limit永远不会为负，也永远不会大于其capacity。
+ *      - 缓冲区的position是要读取或写入的下一个元素的索引。缓冲区的position永远不会为负，也永远不会大于其limit。
+ *
+ * 对于每个非boolean的基本类型，该类都有一个子类。
+ *
+ * 传输数据
+ *
+ * 此类的每个子类定义get和put操作的两个类别：
+ *
+ * Relative操作从当前位置开始读取或写入一个或多个元素，然后将该位置增加传输的元素数量。
+ * 如果请求的传输超出限制，则相对的get操作将引发BufferUnderflowException，而相对的put操作将引发BufferOverflowException；无论哪种情况，都不会传输任何数据。
+ *
+ * Absolute操作采用显式元素索引，并且不影响位置。如果index参数超出限制，则绝对的get和put操作将引发IndexOutOfBoundsException。
+ *
+ * 当然，也可以通过始终相对于当前位置的适当通道的I/O操作，将数据移入或移出缓冲区。
+ *
+ * 标记和重置
+ *
+ * 缓冲区的mark是在调用reset方法时将其位置重置到的索引。mark并非总是定义的，但是在定义mark时，它永远不会是负数，也永远不会大于position。
+ * 如果定义了mark，则在将position或limit调整为小于该mark的值时将其丢弃。如果没定义mark就调用reset方法，就会抛InvalidMarkException异常。
+ *
+ * 不变量
+ *
+ * 对于mark, position, limit, 和capacity，以下不变量成立：
+ * 0 <= mark <= position <= limit <= capacity
+ *
+ * 新创建的缓冲区的position始终为零，并且mark是未定义的。
+ * 初始limit可以是零，也可以是其他一些值，具体取决于缓冲区的类型和构造它的方式。
+ * 新分配的缓冲区的每个元素都将初始化为零。
+ *
+ * 清除、翻转、倒带（Clearing, flipping, and rewinding）
+ *
+ * 除了访问position, limit, 和capacity值以及标记和重置的方法外，此类还定义以下对缓冲区的操作：
+ * - clear使缓冲区为新的通道读取或相对put操作序列做好准备：将limit设置为capacity，并将position设置为零。
+ * - flip使缓冲区准备好进行新的通道写入或相对get操作序列：将limit设置为当前position，然后将该position设置为零。
+ * - rewind使缓冲区准备好重新读取它已经包含的数据：保留limit不变，并将position设置为零。
+ *
+ * 只读的缓冲区
+ *
+ * 每个缓冲区都是可读的，但并非每个缓冲区都是可写的。
+ * 每个缓冲区类的变动方法都指定为可选操作，当对只读缓冲区调用时，该方法将引发ReadOnlyBufferException。
+ * 只读缓冲区不允许更改其内容，但是其mark，position和limit值是可变的。
+ * 缓冲区是否为只读可以通过调用isReadOnly方法来确定。
+ *
+ * 线程安全
+ *
+ * 缓冲区不能安全用于多个并发线程。如果一个缓冲区将由多个线程使用，则应通过适当的同步来控制对该缓冲区的访问。
+ *
+ * 调用链
+ *
+ * 此类中没有其他要返回值的方法被指定为返回在其上调用它们的缓冲区。
+ * 这允许链式调用，如：b.flip().position(23).limit(42);
+ */
 public abstract class Buffer {
 
     /**
@@ -213,6 +272,7 @@ public abstract class Buffer {
      *
      * @return  The capacity of this buffer
      */
+    // 返回buffer的容量
     public final int capacity() {
         return capacity;
     }
@@ -284,6 +344,7 @@ public abstract class Buffer {
      *
      * @return  This buffer
      */
+    // mark一下position的值，用于reset（reset会到将position拨回这个标记位）
     public final Buffer mark() {
         mark = position;
         return this;
@@ -300,6 +361,7 @@ public abstract class Buffer {
      * @throws  InvalidMarkException
      *          If the mark has not been set
      */
+    // 将position重置到将此缓冲区的之前标记的位置。调用此方法并不改变，也不丢弃mark的值。
     public final Buffer reset() {
         int m = mark;
         if (m < 0)
@@ -324,6 +386,13 @@ public abstract class Buffer {
      * in which that might as well be the case. </p>
      *
      * @return  This buffer
+     */
+    /**
+     * 清除此缓冲区。 position被设置为零，limit被设定为容量，并且mark将被丢弃。
+     * 在使用一系列通道读取或put操作填充此缓冲区之前，请调用此方法。例如：
+     *        buf.clear();     // Prepare buffer for reading
+     *        in.read(buf);    // Read data
+     * 此方法实际上不会擦除缓冲区中的数据，但它的名称就好像它的名字一样，因为它最常用于可能会发生这种情况的情况。
      */
     public final Buffer clear() {
         position = 0;
@@ -352,6 +421,15 @@ public abstract class Buffer {
      * one place to another.  </p>
      *
      * @return  This buffer
+     */
+    /**
+     * 反转此缓冲区。 limit被设置为当前position，然后将position设置为零。 如果mark被定义了则会将它丢弃。
+     * 序列后通道读取或放置操作，调用此方法为通道写入或相对get操作的顺序做准备。 例如：
+     *        buf.put(magic);    // Prepend header
+     *        in.read(buf);      // Read data into rest of buffer
+     *        buf.flip();        // Flip buffer
+     *        out.write(buf);    // Write header + data to channel
+     * 这种方法通常用于在结合compact从一个地方传送数据时的另一种方法。
      */
     public final Buffer flip() {
         limit = position;
@@ -387,6 +465,7 @@ public abstract class Buffer {
      *
      * @return  The number of elements remaining in this buffer
      */
+    // 返回当前position和limit之间的元素数量
     public final int remaining() {
         return limit - position;
     }
@@ -398,6 +477,7 @@ public abstract class Buffer {
      * @return  <tt>true</tt> if, and only if, there is at least one element
      *          remaining in this buffer
      */
+    // 当前position和limit之间是否有任何元素。
     public final boolean hasRemaining() {
         return position < limit;
     }

@@ -100,6 +100,25 @@ public interface WritableByteChannel
      * @throws  IOException
      *          If some other I/O error occurs
      */
+    /**
+     * 从给定的缓冲区将字节序列写入此通道。
+     *
+     * 尝试将最多r个字节写入通道，其中r是调用此方法时缓冲区中剩余的字节数，即src.remaining()。
+     *
+     * 假设写入长度为n的字节序列，其中0 <= n <= r。
+     * 此字节序列将从索引p开始的缓冲区中转移，其中p是调用此方法时缓冲区的position。
+     * 返回的最后一个字节的索引将为p+n-1。返回时，缓冲区的position将等于p + n；它的limit不会改变。
+     *
+     * 除非另有说明，否则仅在写入所有r个请求的字节之后，一个写入操作才会返回。
+     * 根据其状态，某些类型的通道可能只写入某些字节，或者可能根本不写入。
+     * 例如，处于非阻塞模式的socket通道不能写入的字节数要多于socket输出缓冲区中的可用字节数。
+     *
+     * 可以随时调用此方法。但是，如果另一个线程已经在该通道上启动了写操作，则该方法的调用将阻塞，直到第一个操作完成。
+     *
+     * @param src 要从中获取字节的缓冲区
+     * @return 写入的字节数，可能为零
+     * @throws IOException
+     */
     public int write(ByteBuffer src) throws IOException;
 
 }

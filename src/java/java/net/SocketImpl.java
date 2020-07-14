@@ -41,6 +41,13 @@ import java.io.FileDescriptor;
  * @author  unascribed
  * @since   JDK1.0
  */
+
+/**
+ * 抽象类SocketImpl是实际上实现socket的所有类的通用超类。
+ * 它用于创建客户端socket和服务器socket。
+ *
+ * “普通”套接字完全按照描述的方法实现这些方法，而无需尝试通过防火墙或代理。
+ */
 public abstract class SocketImpl implements SocketOptions {
     /**
      * The actual Socket object.

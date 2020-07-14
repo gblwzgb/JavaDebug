@@ -48,6 +48,14 @@ import java.security.PrivilegedExceptionAction;
  * @see     java.nio.channels.ServerSocketChannel
  * @since   JDK1.0
  */
+
+/**
+ * 此类实现server socket。 server socket等待请求通过网络进入。
+ * 它根据该请求执行一些操作，然后可能将结果返回给请求者。
+ *
+ * server socket的实际工作是由SocketImpl类的实例执行的。
+ * 应用程序可以更改创建socket实现类的socket工厂，以将其自身配置为创建适合于本地防火墙的socket。
+ */
 public
 class ServerSocket implements java.io.Closeable {
     /**
@@ -83,6 +91,7 @@ class ServerSocket implements java.io.Closeable {
      * @exception IOException IO error when opening the socket.
      * @revised 1.4
      */
+    // 创建一个未绑定的服务器套接字。
     public ServerSocket() throws IOException {
         setImpl();
     }
@@ -124,8 +133,24 @@ class ServerSocket implements java.io.Closeable {
      * @see        java.net.ServerSocket#setSocketFactory(java.net.SocketImplFactory)
      * @see        SecurityManager#checkListen
      */
+    /**
+     * 创建绑定到指定端口的服务器套接字。 端口号0表示通常从临时端口范围自动分配该端口号。
+     * 然后可以通过调用getLocalPort获取此端口号。
+     *
+     * 传入连接指示（连接请求）的最大队列长度设置为50。如果在队列已满时到达连接指示，则拒绝连接。
+     *
+     * 如果应用程序指定了服务器套接字工厂，则将调用该工厂的createSocketImpl方法来创建实际的套接字实现。
+     * 否则，将创建“普通”套接字。
+     *
+     * 如果存在安全管理器，则以port参数作为其参数调用其checkListen方法，以确保允许该操作。
+     * 这可能会导致SecurityException。
+     *
+     * @param port 端口号，传0就会自动分配
+     * @throws IOException
+     */
     public ServerSocket(int port) throws IOException {
         this(port, 50, null);
+        System.out.println(impl.getFileDescriptor());
     }
 
     /**
@@ -227,7 +252,9 @@ class ServerSocket implements java.io.Closeable {
      * @since   JDK1.1
      */
     public ServerSocket(int port, int backlog, InetAddress bindAddr) throws IOException {
+        // 创建一个SocketImpl实现
         setImpl();
+        // 检查端口号是否不在范围内
         if (port < 0 || port > 0xFFFF)
             throw new IllegalArgumentException(
                        "Port value out of range: " + port);
@@ -253,6 +280,7 @@ class ServerSocket implements java.io.Closeable {
      * @since 1.4
      */
     SocketImpl getImpl() throws SocketException {
+        // 不存在则创建一个
         if (!created)
             createImpl();
         return impl;
@@ -280,14 +308,15 @@ class ServerSocket implements java.io.Closeable {
 
     private void setImpl() {
         if (factory != null) {
+            // 如果指定了SocketImplFactory，则通过工厂方法创建实现类
             impl = factory.createSocketImpl();
             checkOldImpl();
         } else {
-            // No need to do a checkOldImpl() here, we know it's an up to date
-            // SocketImpl!
+            // No need to do a checkOldImpl() here, we know it's an up to date SocketImpl!
             impl = new SocksSocketImpl();
         }
         if (impl != null)
+            // 互相持有引用
             impl.setServerSocket(this);
     }
 
@@ -301,6 +330,7 @@ class ServerSocket implements java.io.Closeable {
         if (impl == null)
             setImpl();
         try {
+            // true代表tcp链接
             impl.create(true);
             created = true;
         } catch (IOException e) {
@@ -504,11 +534,24 @@ class ServerSocket implements java.io.Closeable {
      * @revised 1.4
      * @spec JSR-51
      */
+    /**
+     * 监听与此套接字建立的连接并接受它。 该方法将阻塞，直到一个建立连接为止。
+     *
+     * 创建一个新的Socket，如果有安全管理器，则使用s.getInetAddress()。
+     * getHostAddress()和s.getPort()作为其参数来调用安全管理器的checkAccept方法，以确保允许该操作。
+     * 这可能会导致SecurityException。
+     *
+     * @return
+     * @throws IOException
+     */
     public Socket accept() throws IOException {
         if (isClosed())
+            // socket已关闭
             throw new SocketException("Socket is closed");
         if (!isBound())
+            // socket未绑定
             throw new SocketException("Socket is not bound yet");
+        // 创建一个客户端Socket
         Socket s = new Socket((SocketImpl) null);
         implAccept(s);
         return s;
@@ -530,10 +573,19 @@ class ServerSocket implements java.io.Closeable {
      * @revised 1.4
      * @spec JSR-51
      */
+    /**
+     * ServerSocket的子类使用此方法重写accept()以返回其自己的套接字子类。
+     * 因此，FooServerSocket通常会将此方法交给一个空的FooSocket。
+     * 从implAccept返回时，FooSocket将连接到客户端。
+     *
+     * @param s
+     * @throws IOException
+     */
     protected final void implAccept(Socket s) throws IOException {
         SocketImpl si = null;
         try {
             if (s.impl == null)
+              // 设置一个具体的实现类
               s.setImpl();
             else {
                 s.impl.reset();
@@ -542,6 +594,7 @@ class ServerSocket implements java.io.Closeable {
             s.impl = null;
             si.address = new InetAddress();
             si.fd = new FileDescriptor();
+            // 客户端有链接过来了，就和这个socket对接。应该是阻塞在这里了
             getImpl().accept(si);
 
             SecurityManager security = System.getSecurityManager();
@@ -561,6 +614,7 @@ class ServerSocket implements java.io.Closeable {
             throw e;
         }
         s.impl = si;
+        // 设置已连接、已创建、已绑定状态
         s.postAccept();
     }
 

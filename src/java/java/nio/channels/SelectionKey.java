@@ -107,6 +107,40 @@ import java.io.IOException;
  * @see Selector
  */
 
+/**
+ * 表示SelectableChannel向Selector的注册的令牌。
+ *
+ * 每次在selector中注册channel时，都会创建一个SelectionKey。
+ * key一直有效，直到通过调用其cancel方法、关闭其channel、或关闭其selector将其取消。
+ * 取消key并不会立即将其从selector中移除。
+ * 而是将其添加到selector的“cancelled-key set”集中，以便在下一次select操作期间将其删除。
+ * 可以通过调用isValid方法来测试key的有效性。
+ *
+ * SelectionKey包含两个表示为整数值的操作集。
+ * 操作集的每一bit表示key的channel支持的可选操作的类别。
+ *
+ * interest set确定下一次调用selector的select方法时，将测试哪些操作类别是否准备就绪。
+ * 使用创建key时给定的值来初始化interest set；以后可以通过interestOps(int)方法对其进行更改。
+ *
+ * ready set标识key的selector已检测到key的channel已准备就绪的操作类别。
+ * 创建key时，ready set将初始化为零；它可能稍后会在select操作期间由selector更新，但无法直接更新。
+ *
+ * SelectionKey的ready set表明其channel已为某个操作类别做好了提示，但不是保证，此类类别中的操作可以由线程执行而不会导致线程阻塞。
+ * ready set很可能在select操作完成后立即准确。外部事件和在相应通道上调用的I/O操作可能会使它不准确。
+ *
+ * 此类定义了所有已知的operation-set bits，但是精确地给定通道支持哪些bit取决于通道的类型。
+ * SelectableChannel的每个子类都定义一个validOps()方法，该方法返回一个集合，该集合仅标识通道支持的那些操作。
+ * 尝试设置或测试key's channel不支持的operation-set bits将导致适当的运行时异常。
+ *
+ * 通常有必要将一些特定于应用程序的数据与SelectionKey相关联，例如，一个对象代表一个更高级别协议的状态并处理就绪通知，以实现该协议。
+ * 因此，SelectionKey支持将单个任意对象附加到key上。可以通过attach方法附加对象，然后再通过attachment方法获取对象。
+ *
+ * SelectionKey可安全用于多个并发线程。通常，读取和写入interest set的操作将与selector的某些操作同步。
+ * 确切地说，如何执行此同步取决于实现方式：
+ * 在幼稚的实现方式中，如果select操作已经在进行中，则interest set的读写可能会无限期地阻塞；
+ * 在高性能实现中，读取interest set或写入interest set可能会短暂阻塞（如果有的话）。
+ * 无论如何，select操作将始终使用该操作开始时当前的interest set设置值。
+ */
 public abstract class SelectionKey {
 
     /**

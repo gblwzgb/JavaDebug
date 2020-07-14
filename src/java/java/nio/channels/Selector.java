@@ -203,6 +203,68 @@ import java.util.Set;
  * @see SelectionKey
  */
 
+/**
+ * SelectableChannel对象的多路复用器。
+ *
+ * 可以通过调用此类的open方法来创建selector，该方法将使用系统的默认SelectorProvider来创建新的selector。
+ * selector也可以通过调用自定义SelectorProvider的openSelector方法来创建。
+ * selector保持打开状态，直到通过其close方法关闭它为止。
+ *
+ * 可选通道向selector的注册由SelectionKey对象表示。selector维护三组selection keys：
+ * - key set包含代表此selector当前所有通道注册的key。该集合由keys方法返回。
+ * - selected-key set，使得在先前的选择操作期间，每个key的channel被检测为准备好在key的insterest set中标识的至少一个操作。
+ *      该集合由selectedKeys方法返回。所选键集始终是键集的子集。
+ * - cancelled-key set是已取消但其channel尚未注销的key set。此set不能直接访问。cancelled-key set始终是key set的子集。
+ *
+ * 在新创建的selector中，所有三个set均为空。
+ *
+ * 一个key被添加到selector的key set中，作为通过channel的register方法注册channel的副作用。
+ * 在select操作期间，已取消的key将从key set中删除。key set本身不能直接修改。
+ *
+ * 取消key时，无论是通过关闭其channel还是通过调用其cancel方法，都会将一个key添加到其selector的cancelled-key set中。
+ * 取消key将导致其channel在下一次select操作期间被注销，这时该key将从所有selector的key set中删除。
+ *
+ * 通过select操作将key添加到selected-key set。
+ * 通过调用集合的remove方法或调用从集合中获得的迭代器的remove方法，可以直接从selected-key set中删除key。
+ * 决不能以任何其他方式将key从selected-key set中删除。
+ * 作为select操作的副作用，尤其不要删除它们。key可能无法直接添加到selected-key set中。
+ *
+ * Selection
+ * 在每个select操作期间，可以将keys添加到selector的selected-key中或从中删除，也可以将其从selected-key和cancelled-key中删除。
+ * 选择是通过select()，select(long)和selectNow()方法执行的，包括三个步骤：
+ *   1、cancelled-key set中的每个key都从其所属的每个key set中删除，并且其通道已注销。此步骤将cancelled-key set设置为空。
+ *   2、询问底层操作系统是否有更新，有关每个剩余通道的准备情况，以执行自select操作开始时由其key的interest set标识的任何操作。
+ *      对于准备进行至少一项此类操作的通道，将执行以下两个操作之一：
+ *      1.1 如果通道的key尚未在selected-key set中，则将其添加到selected-key set中，并修改其ready-operation set，以准确标识现在通知通道已准备就绪的那些操作。
+ *          先前记录在ready set中的任何准备信息都将被丢弃。
+ *      1.2 否则，通道的key已经在selected-key set中，因此修改其ready-operation set以识别报告通道已准备就绪的任何新操作。
+ *          保留先前记录在ready set中的所有准备信息；换句话说，底层系统返回的ready set按位分离到key的当前ready set中。
+ *      如果在此步骤开始时key set中的所有key都具有空interest sets，则selected-key set和任何key的ready-operation sets都不会更新。
+ *   3、如果在执行步骤（2）时将任何key添加到cancelled-key set中，则将按步骤（1）进行处理。
+ * select操作是否阻塞等待一个或多个通道准备就绪，如果等待了多长时间，则是三种选择方法之间的唯一本质区别。
+ *
+ * Concurrency
+ * selector本身可以安全地供多个并发线程使用。但是，它们的key sets不是。
+ * select操作按该顺序在selector本身，key set和selected-key set上同步。它们还与上面的步骤（1）和（3）期间的cancelled-key set设置同步。
+ * 
+ * 在进行select操作时，对selector的key的interest sets所做的更改对该操作没有影响；他们将在下一个select操作中被看到。
+ * 
+ * 可以随时取消key并关闭通道。因此，在一个或多个selector的key set中存在key并不表示该key有效或其通道已打开。
+ * 如果其他线程有可能取消key或关闭通道，则应用程序代码应谨慎同步并在必要时检查这些条件。
+ *
+ * 在select()或select(long)方法之一中阻塞的线程可能会以三种方式之一被其他线程中断：
+ * - 通过调用selector的wakeup方法，
+ * - 通过调用selector的close方法，或者
+ * - 通过调用阻塞线程的interrupt方法，在这种情况下，将设置其interrupt status并调用selector的wakeup方法。
+ *
+ * close方法以与selector操作相同的顺序在selector和所有三个key set上同步。
+ *
+ * 通常，selector的key set和selected-key sets不能安全地用于多个并发线程。
+ * 如果此类线程可以直接修改这些set之一，则应通过在set本身上进行同步来控制访问。
+ * 这些set的迭代器方法返回的迭代器是fail-fast的：
+ *      如果在创建迭代器之后修改set，则除了通过调用迭代器自己的remove方法之外，
+ *      通过其他任何方式都将抛出java.util.ConcurrentModificationException。
+ */
 public abstract class Selector implements Closeable {
 
     /**

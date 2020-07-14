@@ -71,6 +71,18 @@ import java.nio.channels.spi.SelectorProvider;
  * @since 1.4
  */
 
+/**
+ * 面向流的监听套接字的可选通道。
+ *
+ * 通过调用此类的open方法来创建服务器socket通道。
+ * 无法为任意已存在的ServerSocket创建通道。
+ * 新创建的服务器套接字通道已打开，但尚未绑定。
+ * 尝试调用未绑定的服务器套接字通道的accept方法将导致引发NotYetBoundException。
+ * 可以通过调用此类定义的绑定方法之一来绑定服务器套接字通道。
+ *
+ * 套接字选项是使用setOption方法配置的。 服务器套接字通道支持以下选项：
+ *
+ */
 public abstract class ServerSocketChannel
     extends AbstractSelectableChannel
     implements NetworkChannel
@@ -103,6 +115,16 @@ public abstract class ServerSocketChannel
      *
      * @throws  IOException
      *          If an I/O error occurs
+     */
+    /**
+     * 打开一个服务器套接字通道。
+     *
+     * 通过调用系统级默认SelectorProvider对象的openServerSocketChannel方法来创建新通道。
+     *
+     * 新通道的socket初始化为未绑定； 必须先通过其套接字的bind方法之一将其绑定到特定地址，然后才能接受连接。
+     *
+     * @return
+     * @throws IOException
      */
     public static ServerSocketChannel open() throws IOException {
         return SelectorProvider.provider().openServerSocketChannel();
@@ -151,6 +173,17 @@ public abstract class ServerSocketChannel
      *
      * @since 1.7
      */
+    /**
+     * 将通道的socket绑定到本地地址，并将该socket配置为监听连接。
+     *
+     * 调用此方法等效于以下内容：
+     * bind(local, 0);
+     *
+     * @param local
+     * @return
+     * @throws IOException
+     */
+    // 这个绑定和ServerSocket.bind的区别是啥？https://www.bilibili.com/video/av44787238/
     public final ServerSocketChannel bind(SocketAddress local)
         throws IOException
     {
@@ -217,6 +250,11 @@ public abstract class ServerSocketChannel
      *
      * @return  A server socket associated with this channel
      */
+    /**
+     * 获取与此通道关联的server socket。
+     *
+     * 返回的对象将不会声明java.net.ServerSocket类中未声明的任何公共方法。（因为用了适配器类，所以这么说）
+     */
     public abstract ServerSocket socket();
 
     /**
@@ -265,6 +303,20 @@ public abstract class ServerSocketChannel
      *
      * @throws  IOException
      *          If some other I/O error occurs
+     */
+    /**
+     * 接受与此通道的socket建立的连接。
+     *
+     * 如果此通道处于非阻塞模式，那么如果没有挂起的连接，则此方法将立即返回null。
+     * 否则（即阻塞模式下），它将无限期阻塞，直到有新连接可用或发生I/O错误为止。
+     *
+     * 无论此通道的阻塞模式如何，此方法返回的SocketChannel（如果有）将处于阻塞模式。
+     *
+     * 此方法执行与ServerSocket类的accept方法完全相同的安全检查。
+     * 也就是说，如果已安装安全管理器，则对于每个新连接，此方法都会验证安全管理器的checkAccept方法是否允许连接的远程端点的地址和端口号。
+     *
+     * @return 新连接的SocketChannel，如果此通道处于非阻塞模式并且没有可用的连接，则为null
+     * @throws IOException
      */
     public abstract SocketChannel accept() throws IOException;
 

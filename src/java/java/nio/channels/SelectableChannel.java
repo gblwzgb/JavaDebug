@@ -89,6 +89,39 @@ import java.nio.channels.spi.SelectorProvider;
  * @see Selector
  */
 
+/**
+ * 可以通过Selector多路复用的通道。
+ *
+ * 为了与selector一起使用，必须首先通过register方法注册此类的实例。
+ * 此方法返回一个新的SelectionKey对象，该对象表示通道在selector中的注册。
+ *
+ * 向选择器注册后，通道将保持注册状态，直到注销为止。
+ * 这涉及取消分配由selector分配给该通道的任何资源。
+ *
+ * 通道不能直接注销。相反，代表其注册的key必须被取消。
+ * 取消key要求在selector的下一个选择操作期间注销通道。
+ * 可以通过调用其cancel方法显式地取消key。
+ * 无论是调用通道的close方法还是通过中断通道的I/O操作中阻塞的线程来关闭通道，都将隐式取消通道的所有keys。
+ * 如果selector本身已关闭，则该通道将被注销，并且表示其注册的key将无效，而不会造成进一步延迟。
+ *
+ * 一个频道最多可以使用任何一个特定的selector注册一次。
+ *
+ * 可以通过调用isRegistered方法来确定是否向一个或多个选择器注册了通道。
+ *
+ * Selectable channels可以安全地供多个并发线程使用。
+ *
+ * 阻塞模式
+ *
+ * Selectable channels处于阻塞模式或非阻塞模式。
+ * 在阻塞模式下，在通道上调用的每个I/O操作都将阻塞，直到完成为止。
+ * 在非阻塞模式下，I/O操作将永远不会阻塞，并且可能传输的字节数少于请求的字节数，或者根本没有字节传输。
+ * Selectable channels的阻塞模式可以通过调用其isBlocking方法来确定。
+ *
+ * 新创建的Selectable channels始终处于阻塞模式。
+ * 非阻塞模式与基于selector的多路复用一起使用最有用。
+ * 在使用selector注册之前，必须将通道置于非阻塞模式，并且在注销之前，不得将其返回到阻塞模式。
+ *
+ */
 public abstract class SelectableChannel
     extends AbstractInterruptibleChannel
     implements Channel
@@ -213,8 +246,30 @@ public abstract class SelectableChannel
      *          operation that is supported by this channel, that is, if
      *          {@code set & ~validOps() != 0}
      *
-     * @return  A key representing the registration of this channel with
-     *          the given selector
+     * @return  A key representing the registration of this channel with the given selector
+     */
+    /**
+     * 使用给定的selector注册此channel，并返回selection key。
+     *
+     * 如果此channel当前已在给定的selector中注册，则返回代表该注册的selection key。
+     * 该key的interest set将更改为ops，就像通过调用interestOps(int)方法一样。
+     * 如果att参数不为null，则key的attachment将被设置为该值。
+     * 如果key已被取消，则将引发CancelledKeyException。
+     *
+     * 否则，此channel尚未在给定的selector中注册，所以已注册并返回生成的新key。
+     * key的初始interest set为ops，其attachment为att。
+     *
+     * 可以随时调用此方法。
+     * 如果在此方法或configureBlocking方法的另一次调用正在进行时调用此方法，则它将首先阻塞，直到完成其他操作为止。
+     * 然后，此方法将在selector的key set上进行同步，因此如果与涉及同一selector的另一个注册或选择操作同时调用，则可能会阻塞。
+     *
+     * 如果在执行此操作时关闭了此通道，则此方法返回的key将被取消，因此将无效。
+     *
+     * @param sel 要注册此通道的selector
+     * @param ops 返回的key，所关心的interest set
+     * @param att 返回的key关联的attachment，可能为null
+     * @return 代表此channel在给定selector中的注册的key
+     * @throws ClosedChannelException
      */
     public abstract SelectionKey register(Selector sel, int ops, Object att)
         throws ClosedChannelException;

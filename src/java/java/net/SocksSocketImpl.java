@@ -39,7 +39,7 @@ import sun.net.www.ParseUtil;
  * This is a subclass of PlainSocketImpl.
  * Note this class should <b>NOT</b> be public.
  */
-
+// SOCKS（V4＆V5）TCP套接字实现（RFC 1928）。这是PlainSocketImpl的子类。请注意，此类不应为公共类。
 class SocksSocketImpl extends PlainSocketImpl implements SocksConsts {
     private String server = null;
     private int serverPort = DEFAULT_PORT;

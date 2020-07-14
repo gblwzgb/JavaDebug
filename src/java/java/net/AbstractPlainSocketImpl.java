@@ -91,6 +91,7 @@ abstract class AbstractPlainSocketImpl extends SocketImpl
      * Creates a socket with a boolean that specifies whether this
      * is a stream socket (true) or an unconnected UDP socket (false).
      */
+    // 创建一个带有布尔值的套接字，该布尔值指定这是流套接字（true，tcp）还是未连接的UDP套接字（false）。
     protected synchronized void create(boolean stream) throws IOException {
         this.stream = stream;
         if (!stream) {
@@ -105,7 +106,9 @@ abstract class AbstractPlainSocketImpl extends SocketImpl
                 throw ioe;
             }
         } else {
+            // 创建一个文件描述符
             fd = new FileDescriptor();
+            // native方法
             socketCreate(true);
         }
         if (socket != null)
@@ -384,10 +387,13 @@ abstract class AbstractPlainSocketImpl extends SocketImpl
                 NetHooks.beforeTcpBind(fd, address, lport);
             }
         }
+        // native方法
         socketBind(address, lport);
         if (socket != null)
+            // 设置已绑定状态
             socket.setBound();
         if (serverSocket != null)
+            // 设置已绑定状态
             serverSocket.setBound();
     }
 

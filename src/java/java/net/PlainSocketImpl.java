@@ -38,7 +38,7 @@ import static sun.net.ExtendedOptionsImpl.*;
  *
  * @author Chris Hegarty
  */
-
+// 在Unix系统上，我们仅委托给本机方法。
 class PlainSocketImpl extends AbstractPlainSocketImpl
 {
     static {
@@ -92,6 +92,7 @@ class PlainSocketImpl extends AbstractPlainSocketImpl
         }
     }
 
+    /** 调用native方法，源码可以在openJdk里搜，再底层其实是调用操作系统提供的jdk **/
     native void socketCreate(boolean isServer) throws IOException;
 
     native void socketConnect(InetAddress address, int port, int timeout)

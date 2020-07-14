@@ -637,6 +637,7 @@ class Socket implements java.io.Closeable {
      * @since   1.4
      * @see #isBound
      */
+    // 客户端的bind方法，一般不调用吧
     public void bind(SocketAddress bindpoint) throws IOException {
         if (isClosed())
             throw new SocketException("Socket is closed");
