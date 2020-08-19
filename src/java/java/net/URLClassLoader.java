@@ -71,6 +71,13 @@ import sun.security.util.SecurityConstants;
  * @author  David Connelly
  * @since   1.2
  */
+
+/**
+ * 该类加载器用于从同时引用JAR文件和目录的URL的搜索路径加载类和资源。
+ * 假定任何以“/”结尾的URL均引用目录。 否则，假定URL引用将根据需要打开的JAR文件。
+ * 随后加载类和资源时，将使用创建URLClassLoader实例的线程的AccessControlContext。
+ * 默认情况下，仅向已加载的类授予权限，以访问创建URLClassLoader时指定的URL。
+ */
 public class URLClassLoader extends SecureClassLoader implements Closeable {
     /* The search path for classes and resources */
     private final URLClassPath ucp;
@@ -354,6 +361,14 @@ public class URLClassLoader extends SecureClassLoader implements Closeable {
      *            or if the loader is closed.
      * @exception NullPointerException if {@code name} is {@code null}.
      */
+    /**
+     * 从URL搜索路径中查找并加载指定名称的类。
+     * 指向JAR文件的所有URL都会根据需要加载和打开，直到找到该类为止。
+     *
+     * @param name
+     * @return
+     * @throws ClassNotFoundException
+     */
     protected Class<?> findClass(final String name)
         throws ClassNotFoundException
     {
@@ -362,10 +377,13 @@ public class URLClassLoader extends SecureClassLoader implements Closeable {
             result = AccessController.doPrivileged(
                 new PrivilegedExceptionAction<Class<?>>() {
                     public Class<?> run() throws ClassNotFoundException {
+                        // 将类似java.lang.String的类名修改成java/lang/String.calss
                         String path = name.replace('.', '/').concat(".class");
+                        // 寻找这个文件
                         Resource res = ucp.getResource(path, false);
                         if (res != null) {
                             try {
+                                // 将这个
                                 return defineClass(name, res);
                             } catch (IOException e) {
                                 throw new ClassNotFoundException(name, e);
@@ -441,14 +459,18 @@ public class URLClassLoader extends SecureClassLoader implements Closeable {
      * Resource. The resulting Class must be resolved before it can be
      * used.
      */
+    // 使用从指定的Resource获得的类字节文件来定义一个Class。
+    // 所产生的Class必须先解析才能使用。
     private Class<?> defineClass(String name, Resource res) throws IOException {
         long t0 = System.nanoTime();
         int i = name.lastIndexOf('.');
         URL url = res.getCodeSourceURL();
         if (i != -1) {
+            // 获取到package名
             String pkgname = name.substring(0, i);
             // Check if package already loaded.
             Manifest man = res.getManifest();
+            // 定义一个Package对象
             definePackageInternal(pkgname, man, url);
         }
         // Now read the class bytes and define the class

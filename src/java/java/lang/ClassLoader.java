@@ -175,6 +175,75 @@ import sun.security.util.SecurityConstants;
  * @see      #resolveClass(Class)
  * @since 1.0
  */
+
+/**
+ * 类加载器是负责加载class的对象。 ClassLoader类是一个抽象类。
+ * 给定类的二进制名称，类加载器应尝试查找或生成构成该类定义的数据。
+ * 一种典型的策略是将名称转换为文件名，然后从文件系统中读取该名称的“类文件”。
+ *
+ * 每个Class对象都包含对定义它的ClassLoader的引用。
+ *
+ * 数组类的类对象不是由类加载器创建的，而是根据Java运行时的要求自动创建的。
+ * 由Class.getClassLoader()返回的数组类的类加载器与其元素类型的类加载器相同。
+ * 如果元素类型是原始类型，则数组类没有类加载器。
+ *
+ * 应用程序实现ClassLoader的子类，以扩展Java虚拟机动态加载类的方式。
+ *
+ * security managers通常可以使用类加载器来指示安全域。
+ *
+ * ClassLoader类使用委托模型搜索类和资源。每个ClassLoader实例都有一个关联的父类加载器。(组合，而非继承)
+ * 当请求查找类或资源时，ClassLoader实例会将对类或资源的搜索委托给其父类加载器，然后再尝试查找类或资源本身。
+ * 虚拟机的内置类加载器（称为“bootstrap类加载器”）本身没有父级，但可以用作ClassLoader实例的父级。
+ * 支持并发加载类的类加载器称为具有并行功能的类加载器，并且要求它们通过调用ClassLoader.registerAsParallelCapable方法在其类初始化时进行自身注册。请注意，默认情况下，ClassLoader类注册为具有并行功能。但是，如果它们的子类具有并行功能，则仍需要注册自己。在委派模型不是严格分层的环境中，类加载器需要具有并行功能，否则类加载会导致死锁，因为在类加载过程中保持了加载器锁（请参见loadClass方法）。
+ *
+ * 通常，Java虚拟机以平台相关的方式从本地文件系统加载类。
+ * 例如，在UNIX系统上，虚拟机从CLASSPATH环境变量定义的目录中加载类。
+ *
+ * 但是，某些类可能不是源自文件的。它们可能源自其他来源，例如网络，也可能由应用程序构造。
+ * 方法defineClass将字节数组转换为Class类的实例。可以使用Class.newInstance创建此新定义的Class的实例。
+ *
+ * 由类加载器创建的对象的方法和构造函数可以引用其他类。
+ * 为了确定所引用的类，Java虚拟机将调用最初创建该类的类加载器的loadClass方法
+ *
+ * 例如，应用程序可以创建网络类加载器，以从服务器下载类文件。 示例代码可能如下所示：
+ *
+ * <blockquote><pre>
+ *   ClassLoader loader&nbsp;= new NetworkClassLoader(host,&nbsp;port);
+ *   Object main&nbsp;= loader.loadClass("Main", true).newInstance();
+ *       &nbsp;.&nbsp;.&nbsp;.
+ * </pre></blockquote>
+ *
+ * 网络类加载器子类必须定义方法findClass和loadClassData才能从网络加载类。
+ * 下载组成类的字节后，应使用defineClass方法创建类实例。 一个示例实现是：
+ *
+ * <blockquote><pre>
+ *     class NetworkClassLoader extends ClassLoader {
+ *         String host;
+ *         int port;
+ *
+ *         public Class findClass(String name) {
+ *             byte[] b = loadClassData(name);
+ *             return defineClass(name, b, 0, b.length);
+ *         }
+ *
+ *         private byte[] loadClassData(String name) {
+ *             // load the class data from the connection
+ *             &nbsp;.&nbsp;.&nbsp;.
+ *         }
+ *     }
+ * </pre></blockquote>
+ *
+ * Binary names
+ *
+ * 作为ClassLoader中方法的String参数提供的任何类名称，都必须是Java™语言规范所定义的二进制名称。
+ * 有效类名的示例包括：
+ * <blockquote><pre>
+ *   "java.lang.String"
+ *   "javax.swing.JSpinner$DefaultEditor"
+ *   "java.security.KeyStore$Builder$FileBuilder$1"
+ *   "java.net.URLClassLoader$3$1"
+ * </pre></blockquote>
+ */
 public abstract class ClassLoader {
 
     private static native void registerNatives();
@@ -185,11 +254,13 @@ public abstract class ClassLoader {
     // The parent class loader for delegation
     // Note: VM hardcoded the offset of this field, thus all new fields
     // must be added *after* it.
+    // 父加载器，这里使用组合而非继承！
     private final ClassLoader parent;
 
     /**
      * Encapsulates the set of parallel capable loader types.
      */
+    // 封装一组并行的加载器类型。
     private static class ParallelLoaders {
         private ParallelLoaders() {}
 
@@ -397,10 +468,12 @@ public abstract class ClassLoader {
     {
         synchronized (getClassLoadingLock(name)) {
             // First, check if the class has already been loaded
+            // 查询这个Class有没有加载过（有没有，是相对同一个加载器来说。每次都新new一个类加载器去load的话，都是没加载过的）
             Class<?> c = findLoadedClass(name);
             if (c == null) {
                 long t0 = System.nanoTime();
                 try {
+                    // 如果parent存在，优先使用父加载器
                     if (parent != null) {
                         c = parent.loadClass(name, false);
                     } else {
@@ -412,8 +485,8 @@ public abstract class ClassLoader {
                 }
 
                 if (c == null) {
-                    // If still not found, then invoke findClass in order
-                    // to find the class.
+                    // If still not found, then invoke findClass in order to find the class.
+                    // 如果仍然找不到，请调用findClass以便找到该类。
                     long t1 = System.nanoTime();
                     c = findClass(name);
 
@@ -746,6 +819,28 @@ public abstract class ClassLoader {
      *          contains classes that were signed by a different set of
      *          certificates than this class, or if <tt>name</tt> begins with
      *          "<tt>java.</tt>".
+     */
+    /**
+     * 使用可选的ProtectionDomain将字节数组转换为Class类的实例。
+     * 如果domain为空，则将默认domain分配给该文档中为defineClass(String，byte []，int，int)指定的类。
+     * 在使用该类之前，必须先对其进行解析resolved。
+     *
+     * 程序包中定义的第一个类确定该程序包中定义的所有后续类必须包含的确切证书集。
+     * 从该类的ProtectionDomain中的CodeSource获取该类的证书集。
+     * 添加到该程序包的任何类都必须包含相同的证书集，否则将引发SecurityException。
+     * 请注意，如果name为null，则不执行此检查。您应该始终传入要定义的类的二进制名称以及字节。
+     * 这样可以确保您正在定义的类确实是您认为的类。
+     *
+     * 指定的名称不能以“ java.”开头，因为“ java.*”包中的所有类只能由bootstrap类加载器定义。
+     * 如果名称不为null，则它必须等于由以下类指定的类的二进制名称：字节数组“ b”，否则将引发NoClassDefFoundError。
+     *
+     * @param name
+     * @param b
+     * @param off
+     * @param len
+     * @param protectionDomain
+     * @return
+     * @throws ClassFormatError
      */
     protected final Class<?> defineClass(String name, byte[] b, int off, int len,
                                          ProtectionDomain protectionDomain)

@@ -1197,6 +1197,10 @@ public abstract class AbstractQueuedSynchronizer
     public final void acquire(int arg) {
         if (!tryAcquire(arg) &&
             acquireQueued(addWaiter(Node.EXCLUSIVE), arg))
+            // 执行到这里，说明获取到锁了，而且被中断过。
+            // 由于内层已经把中断标记位清除掉了，所以这里自我中断一下，设置一个中断标记位
+            // 这样业务方就可以根据中断标记位做相应的处理了，不会悄咪咪地把中断给吃掉了的情况。
+            // 如果业务方没处理这个中断，直接马上写了一个LockSupport.park()，那么由于中断标志位的存在，这个park不会阻塞住。
             selfInterrupt();
     }
 

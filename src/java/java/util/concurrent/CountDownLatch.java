@@ -36,6 +36,7 @@
 package java.util.concurrent;
 import java.util.concurrent.locks.AbstractQueuedSynchronizer;
 
+// 使用场景，Druid启动时，会启动两个线程，在run方法里countDown()，在外层await，保证两个线程都启动好了。
 /**
  * A synchronization aid that allows one or more threads to wait until
  * a set of operations being performed in other threads completes.
