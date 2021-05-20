@@ -80,6 +80,7 @@ import sun.misc.SharedSecrets;
  * @author Josh Bloch, Doug Lea
  * @param <E> the type of elements held in this collection
  */
+// 优先级队列，使用二叉堆的数据结构。
 public class PriorityQueue<E> extends AbstractQueue<E>
     implements java.io.Serializable {
 

@@ -136,6 +136,13 @@ import java.util.concurrent.locks.ReentrantLock;
  *
  * @author Doug Lea
  */
+// 假设去坐过山车，满人是10人(parties)，
+// 上一个少一个名额(count--)，
+// 为了防止踩踏事件，每次只能一个一个上(lock.lock())
+// 每次都要满人了才能出发，人没满就等待(trip.await())
+// 最后上车的人(--count == 0)，
+// 按下按钮(执行barrierCommand)，唤醒其他等待的人(trip.notifyAll())。
+// 然后重置
 public class CyclicBarrier {
     /**
      * Each use of the barrier is represented as a generation instance.
@@ -152,9 +159,9 @@ public class CyclicBarrier {
         boolean broken = false;
     }
 
-    /** The lock for guarding barrier entry */
+    /** 保护 Barrier 入口的锁 */
     private final ReentrantLock lock = new ReentrantLock();
-    /** Condition to wait on until tripped */
+    /** 等待到跳闸的条件 */
     private final Condition trip = lock.newCondition();
     /** The number of parties */
     private final int parties;
@@ -193,7 +200,7 @@ public class CyclicBarrier {
     }
 
     /**
-     * Main barrier code, covering the various policies.
+     * 主要的屏障代码，涵盖各种逻辑
      */
     private int dowait(boolean timed, long nanos)
         throws InterruptedException, BrokenBarrierException,

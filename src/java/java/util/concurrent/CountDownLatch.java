@@ -154,6 +154,11 @@ import java.util.concurrent.locks.AbstractQueuedSynchronizer;
  * @since 1.5
  * @author Doug Lea
  */
+
+/*
+ * countDown()的线程没有限制(state--)
+ * 想要通过CountDownLatch的线程(await())很简单，等到 state 释放到0就可以了。
+ */
 public class CountDownLatch {
     /**
      * Synchronization control For CountDownLatch.

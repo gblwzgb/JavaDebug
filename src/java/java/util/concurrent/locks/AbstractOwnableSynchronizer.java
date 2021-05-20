@@ -47,6 +47,16 @@ package java.util.concurrent.locks;
  * @since 1.6
  * @author Doug Lea
  */
+
+/**
+ * 线程专有的同步器。此类提供了创建锁和相关的同步器（可能涉及所有权概念）的基础。
+ * AbstractOwnableSynchronizer类本身并不管理或使用此信息。
+ * 但是，子类和工具可以使用适当维护的值来帮助控制和监视访问并提供诊断。
+ */
+
+/*
+ * 记录同步器在独占模式下，占用同步器的线程(exclusiveOwnerThread)。
+ */
 public abstract class AbstractOwnableSynchronizer
     implements java.io.Serializable {
 

@@ -89,6 +89,8 @@ import sun.misc.SharedSecrets;
  * @author Doug Lea
  * @param <E> the type of elements held in this collection
  */
+// 写时，先复制出一个新在数组，在新的数组上操作完后，替换原数组的引用地址。
+// 每次add都会复制，所以适合读多写少的场景。
 public class CopyOnWriteArrayList<E>
     implements List<E>, RandomAccess, Cloneable, java.io.Serializable {
     private static final long serialVersionUID = 8673264195747942595L;
@@ -394,6 +396,7 @@ public class CopyOnWriteArrayList<E>
      * @throws IndexOutOfBoundsException {@inheritDoc}
      */
     public E get(int index) {
+        // volatile 读，保证能看到最新的数组
         return get(getArray(), index);
     }
 
@@ -439,6 +442,7 @@ public class CopyOnWriteArrayList<E>
             int len = elements.length;
             Object[] newElements = Arrays.copyOf(elements, len + 1);
             newElements[len] = e;
+            // 使用 volatile 写，保证 get能立即看到
             setArray(newElements);
             return true;
         } finally {

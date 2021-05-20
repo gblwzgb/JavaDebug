@@ -324,10 +324,11 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
         /**
          * Puts or takes an item.
          */
+        // 放和取共用的
         @SuppressWarnings("unchecked")
         E transfer(E e, boolean timed, long nanos) {
             /*
-             * Basic algorithm is to loop trying one of three actions:
+             * 基本算法是循环尝试以下三个动作之一：
              *
              * 1. If apparently empty or already containing nodes of same
              *    mode, try to push node on stack and wait for a match,
@@ -348,6 +349,7 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
              */
 
             SNode s = null; // constructed/reused as needed
+            // REQUEST 为消费者，DATA 为生产者
             int mode = (e == null) ? REQUEST : DATA;
 
             for (;;) {

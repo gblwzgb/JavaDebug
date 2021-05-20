@@ -67,6 +67,7 @@ import java.util.*;
  * @author Doug Lea
  * @param <E> the type of elements held in this collection
  */
+// 延迟队列，借用 PriorityQueue 的能力，获取最近要到 deadline 的节点，然后 sleep 剩余的时间。
 public class DelayQueue<E extends Delayed> extends AbstractQueue<E>
     implements BlockingQueue<E> {
 

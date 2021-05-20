@@ -118,6 +118,7 @@ import java.util.*;
  * @since 1.5
  * @author Doug Lea
  */
+// 在 ThreadPoolExecutor 的基础上，使用延迟队列，完成周期性执行 task 的功能。
 public class ScheduledThreadPoolExecutor
         extends ThreadPoolExecutor
         implements ScheduledExecutorService {

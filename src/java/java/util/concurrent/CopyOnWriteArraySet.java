@@ -93,6 +93,9 @@ import java.util.function.Consumer;
  * @author Doug Lea
  * @param <E> the type of elements held in this collection
  */
+// 使用CopyOnWriteArrayList.addIfAbsent的能力来防止重复。
+// CopyOnWriteArrayList内部先indexOf判定值存不存在，时间复杂度随节点数增加线性增加。
+// 同样比较适合读多写少的场景。
 public class CopyOnWriteArraySet<E> extends AbstractSet<E>
         implements java.io.Serializable {
     private static final long serialVersionUID = 5457747651344034263L;

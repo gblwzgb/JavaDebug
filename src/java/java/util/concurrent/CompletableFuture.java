@@ -238,7 +238,7 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
         do {} while (!tryPushStack(c));
     }
 
-    /* ------------- Encoding and decoding outcomes -------------- */
+    /* ------------- 编码和解码结果 -------------- */
 
     static final class AltResult { // See above
         final Throwable ex;        // null only for NIL
@@ -378,7 +378,7 @@ public class CompletableFuture<T> implements Future<T>, CompletionStage<T> {
         return t;
     }
 
-    /* ------------- Async task preliminaries -------------- */
+    /* ------------- Async task preliminaries(预备) -------------- */
 
     /**
      * A marker interface identifying asynchronous tasks produced by

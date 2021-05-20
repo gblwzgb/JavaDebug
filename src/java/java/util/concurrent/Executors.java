@@ -68,6 +68,7 @@ import sun.security.util.SecurityConstants;
  * @since 1.5
  * @author Doug Lea
  */
+// 阿里编程规范上，禁止使用这个类来创建线程池，容易OOM。
 public class Executors {
 
     /**

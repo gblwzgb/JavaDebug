@@ -98,6 +98,15 @@ import java.util.function.Supplier;
  * 每个线程都保持对其线程局部变量副本的隐式引用，只要线程是活动的并且ThreadLocal实例访问; 一个线程消失之后，所有的线程局部实例的副本都会被垃圾回收（除非存在对这些副本的其他引用）。
  *
  */
+// 使用不当容易内存泄露
+
+/*
+ * 每个线程对象内部都有一个 Map 叫做：ThreadLocal.ThreadLocalMap。
+ *
+ * Map 的 key 是 ThreadLocal 实例，值就是泛型T的具体值。
+ *
+ * ThreadLocal 只是封装了对该Map的访问而已。
+ */
 public class ThreadLocal<T> {
     /**
      * ThreadLocals rely on per-thread linear-probe hash maps attached
@@ -222,6 +231,12 @@ public class ThreadLocal<T> {
      *
      * @param value the value to be stored in the current thread's copy of
      *        this thread-local.
+     */
+    /**
+     * 将此线程局部变量的当前线程副本设置为指定值。
+     * 大多数子类将不需要重写此方法，而仅依靠initialValue方法来设置线程局部变量的值。
+     *
+     * @param value
      */
     public void set(T value) {
         Thread t = Thread.currentThread();
